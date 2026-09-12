@@ -1,0 +1,53 @@
+Norrhamn City - third-party assets
+
+All files are hosted locally with the game. No third-party API is contacted
+while playing. The original creators do not endorse this game.
+
+ambientCG - CC0 1.0 Universal
+https://creativecommons.org/publicdomain/zero/1.0/
+https://docs.ambientcg.com/license/
+
+Asphalt012: https://ambientcg.com/a/Asphalt012
+Bricks059: https://ambientcg.com/a/Bricks059
+PavingStones119: https://ambientcg.com/a/PavingStones119
+Modifications: Color, OpenGL normal and roughness maps selected from the
+2K JPG packages; images resized/recompressed for local game distribution.
+
+Poly Haven - CC0 1.0 Universal
+https://creativecommons.org/publicdomain/zero/1.0/
+https://polyhaven.com/license
+
+Outdoor Table Chair Set 01:
+https://polyhaven.com/a/outdoor_table_chair_set_01
+Street Lamp 01: https://polyhaven.com/a/street_lamp_01
+Urban Courtyard 02: https://polyhaven.com/a/urban_courtyard_02
+1K glTF/textures and 1K HDR. Models are scaled/placed in the game.
+
+Car Concept - Creative Commons Attribution 4.0 International
+Copyright 2024 Darmstadt Graphics Group GmbH.
+Eric Chadwick - model and textures.
+https://creativecommons.org/licenses/by/4.0/
+https://github.com/KhronosGroup/glTF-Sample-Assets/tree/main/Models/CarConcept
+
+CarConcept.glb is distributed unmodified. Runtime changes: uniform scaling,
+wheel-pose alignment and axle animation with stationary brake pads,
+tinted alpha glazing in place of transmission, distance LOD.
+The original model was based on a CC0 concept car by Unity Fan.
+
+Khronos logo: Copyright 2015 Khronos Group.
+3D Commerce logo: Copyright 2017 Khronos Group.
+Logos are part of the original model, not game branding or an endorsement.
+
+Use of Logo or Trademark Image owned by Khronos
+
+The logo or trademark incorporated into this content is owned by
+The Khronos Group and is used by permission in accordance with the
+Legal Mark Usage Guidelines at https://www.Khronos.org/.
+
+Use in this model do not change the license of the model. The model
+license does not confer any usage rights on the Mark beyond that
+specified in the Guidelines. In particular, there is no right to
+use the Mark in any other context based on the usage here.
+
+Khronos reserves the right to remove the Mark or unilaterally
+change the terms of use.
