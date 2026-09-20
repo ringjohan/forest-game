@@ -26,6 +26,23 @@ npm run preview
 
 Byggkommandot typkontrollerar koden och skapar en produktionsversion i `dist/`.
 
+### Regressionstester
+
+Med utvecklingsservern igång, öppna
+`http://127.0.0.1:5173/tests/world.html`. Testerna kontrollerar den
+sammanhängande gångvägen, koordinatövergången i båda riktningar,
+flygplatsens tillgänglighet, befintliga hus, start, vybyte, flyggränser,
+landning vid olika bildfrekvenser, kollisionshantering, piltangenternas
+flygstyrning och faktisk stigning till 10 000 meter. De verifierar också
+flygplanets gångkollision, bilarnas verkliga bredd, BMW:ns uppmätta toppfart,
+rödljusbrott, hastighetsgränsen, polisjakt och möjligheten att komma undan.
+De använder spelets riktiga världs- och flygkod
+i webbläsaren utan extra testberoenden.
+
+```sh
+npx tsc --noEmit -p tests/tsconfig.json
+```
+
 ## Kontroller
 
 | Kontroll | Funktion |
@@ -41,6 +58,10 @@ Byggkommandot typkontrollerar koden och skapar en produktionsversion i `dist/`.
 | F | Hugg med utrustat svärd i den riktning du är vänd |
 | M | Öppna / stäng kartan |
 | C | Valfri snabbresa mellan skogen och staden |
+| V (i flygplanet) | Växla mellan cockpit och följkamera bakom planet |
+| W / S (i flygplanet) | Gas / broms |
+| Vänster pil / höger pil (i flygplanet) | Sväng vänster / höger |
+| Pil ned / pil upp (i flygplanet) | Höj nosen och stig / sänk nosen och sjunk |
 | Escape | Paus / stäng en öppen panel |
 
 Ljud aktiveras med högtalarknappen. Besök alla fyra byar för att slutföra
@@ -50,13 +71,14 @@ aktuella spelomgången och återställs när sidan laddas om.
 ## Norrhamn City
 
 Du behöver inte snabbresa: promenera söderut på stigen från Björkby,
-förbi startplatsen och skyltarna mot Norrhamn. Vid skogens södra gräns
-byter spelet automatiskt till stadens infart. Fortsätt österut till
-terminalen, eller gå västerut mot den gröna portskylten för att återvända till
-skogsstigen. Vid skogsutgången visas **E: Gå tillbaka till Grönvedsskogen**.
-Du kan också bara fortsätta västerut genom den breda passagen; övergången
-utlöses innan kartans osynliga ytterkant. Övergången sker till fots, inte i ett fordon. Kartan visar
-stigen och utfarten. Upptäckta byar, hälsa, tid och utrustning följer med;
+förbi startplatsen och skyltarna mot Norrhamn. Träden glesnar, terrängen
+planar ut och stadens byggnader och skyskrapor blir synliga mellan träden.
+Skogen och staden ritas samtidigt i en sammanhängande värld: ingen
+teleportering, scenladdning eller kameraklipp sker vid skogsbrynet.
+Fortsätt genom infarten till terminalen, eller följ den gröna skylten och
+stigen tillbaka till skogen. Övergången kan göras till fots i båda riktningarna.
+Världskartan visar skogen, staden, flygplatsen och deras förbindelser.
+Upptäckta byar, hälsa, tid och utrustning följer med;
 husen går fortfarande att besöka. C finns kvar som valfri snabbresa.
 
 Staden har olika stadsdelar med egen arkitektur, skyltade caféer,
@@ -69,12 +91,12 @@ en detaljerad glTF-modell med interiör, lack och glas när du är nära.
 På längre avstånd används den enklare bilmodellen. Övriga fordon är
 fortfarande procedurgenererade.
 
-Fyra stadsdelar syns både på kartan och i platsnamnet:
+Fyra stadsdelar har olika arkitektur och egna platsnamn:
 
-- **Gamla stan**, i nordväst: låga sten- och tegelfasader, tak och gesimser.
-- **Centrum**, i nordost: höga glastorn med metallramar och takinstallationer.
-- **Magasinskvarteren**, i sydväst: lägre tegelmagasin, stora portar och matställen.
-- **Lindkvarteren**, i sydost: bostadshus med balkonger.
+- **Gamla stan**, i nordost: låga sten- och tegelfasader, tak och gesimser.
+- **Centrum**, i sydost: höga glastorn med metallramar och takinstallationer.
+- **Magasinskvarteren**, i nordväst: lägre tegelmagasin, stora portar och matställen.
+- **Lindkvarteren**, i sydväst: bostadshus med balkonger.
 
 Över hundra fotgängare rör sig i staden, med fler kring terminalen och
 matkvarteren. Några korsar gatorna vid övergångsställen och väntar på trafiken.
@@ -127,6 +149,71 @@ Gå nära ett stillastående fordon och tryck E för att köra. WASD eller
 piltangenterna ger gas, backar och styr; Space bromsar. Stanna och tryck E
 för att kliva ur på en ledig plats. Trafiken följer trafikljus och bromsar
 för människor och andra fordon. Staden är trygg även på natten.
+
+### Bilar och polisjakt
+
+Bilarnas kollisionsytor följer karossens längd, bredd och riktning.
+Den röda sportbilens när- och avståndsmodeller har samma mått; den har inte
+längre en bred osynlig cirkel som fastnar vid föremål bredvid bilen.
+Snabba bilar kontrolleras i små rörelsesteg så att de inte passerar genom hinder.
+
+**BMW Sport** står vid bussterminalen tillsammans med de andra parkerade
+fordonen. Den har BMW-märkning, en egen sportkaross, toppfart **400 km/h**,
+kraftigare acceleration och bromsar samt fartberoende styrning för bättre
+stabilitet. Det är en egen procedurgenererad, inofficiell spelmodell, inte
+en licensierad modell av en viss serieproducerad BMW. Toppfarten är spelprestanda.
+
+För biltrafiken i hela staden gäller **70 km/h**:
+
+- Fortkörning eller att passera stopplinjen vid **rött ljus** gör dig efterlyst.
+  Grönt ljus, väntan vid rött och att redan befinna sig i korsningen när
+  ljuset slår om startar inte en jakt.
+- Polisbilar följer gatunätet och jagar dig med blåljus. Sirener hörs om
+  spelets ljud är aktiverat. Patruller i tjänst kan inte lånas.
+- Polisen fångar dig när en patrull kommer nära och du står stilla,
+  kör långsamt eller har klivit ur. Polisen kan inte fånga dig genom husväggar.
+- Håll dig på säkert avstånd från alla patruller i **20 sammanhängande
+  sekunder** för att skaka av dig dem. HUD visar jakt och nedräkning.
+- Om du blir fångad får du tillbringa **60 sekunder i häktet**. Därefter
+  släpps du automatiskt ut vid terminalens polisstation. Upptäckter,
+  hälsa och utrustning behålls; bilen står kvar där du blev stoppad.
+- Snabbresa är avstängd under jakt och fängelsevistelse. Öppna paneler
+  och tappat fönsterfokus pausar både jakten och fängelsetiden, precis som resten av spelet.
+
+## Flygplats och flygning
+
+Norrhamns flygplats ligger öster om staden. Öppna **M** för världskartan:
+flygplatsen och planet är markerade. En anslutningsväg går från stadens
+östra ytterkant till terminalen och startbanan. Bilar kan köras till
+stadsgränsen; fortsätt till fots till planet och tryck **E** nära flygplanet.
+Flygkropp, vingar och hjul är solida när planet står på marken. Gå runt
+planet till ombordstigningsplatsen; det går inte att gå genom flygplanet.
+
+- Håll **W** för att accelerera längs banan och lyfta.
+- **Vänster / höger pil** svänger åt vänster / höger.
+- **Pil ned (↓)** höjer nosen och stiger. **Pil upp (↑)** sänker nosen och sjunker.
+- **S** minskar farten och bromsar på marken. Piltangenterna ändrar inte gasen.
+- **V** växlar mellan en cockpit med instrument och en följkamera bakom planet.
+- Flyg fritt över både staden och skogen utan områdesbyten. HUD visar fart,
+  höjd över mark och vald vy.
+- Återvänd till startbanan, sänk farten och sjunk försiktigt för att landa.
+  Håll **S + pil upp (↑)** på rak inflygning: planet hjälper till att plana ut
+  nära banan. Stanna helt innan du trycker **E** för att kliva ur.
+  Planet står kvar.
+
+Flygningen är lättillgänglig arkadflygning, inte en flygsimulator.
+Världen har en yttre flyggräns och ett höjdtak på **10 000 meter** över
+världens nollnivå; HUD visar i stället höjd över marken under planet.
+Du kan stiga långt över skyskraporna och skogen. Siktavståndet och diset
+anpassas för flygning på hög höjd, och följkameran höjer sig bakom planet
+för att visa landskapet nedanför. Space, Shift och A/D styr inte planet;
+gång- och bilkontrollerna är oförändrade.
+Kollisioner och alltför snabba eller sneda landningar ger ett
+meddelande och återställer planet säkert vid flygplatsen; upptäckter och
+utrustning behålls. Hus, träd och stadsbyggnader går inte att flyga igenom.
+Snabbresa och svärd är avstängda ombord. Karta, hjälp, dialoger,
+ryggsäck och tappat fönsterfokus pausar även flygningen.
+Flygplats, flygplan och cockpit genereras lokalt utan nya resursnedladdningar.
 
 ## Dag, natt och skydd
 

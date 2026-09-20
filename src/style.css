@@ -16,10 +16,11 @@ button { -webkit-tap-highlight-color: transparent; }
 [hidden] { display: none !important; }
 #app, #scene { position: fixed; inset: 0; }
 #scene { width: 100%; height: 100%; display: block; outline: none; }
-.vignette { position: fixed; inset: 0; pointer-events: none; background: radial-gradient(ellipse at 50% 44%, transparent 40%, #0b1b1630 100%); }
-.in-city .grain { display: none; }
+.vignette { position: fixed; inset: 0; pointer-events: none; background: radial-gradient(ellipse at 50% 44%, transparent 40%, #0b1b1630 100%); transition: opacity 2s; }
+.in-city .grain { opacity: 0; }
 .in-city .vignette { opacity: 0.35; }
 .grain { position: fixed; inset: 0; pointer-events: none; opacity: 0.022; background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 180 180' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.92' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Cpath fill='%23fff' filter='url(%23n)' opacity='.9' d='M0 0h180v180H0z'/%3E%3C/svg%3E"); }
+.grain { transition: opacity 2s; }
 .icon { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; flex-shrink: 0; }
 .topbar { position: fixed; top: 30px; left: 36px; right: 36px; display: flex; align-items: center; justify-content: space-between; gap: 16px; z-index: 5; }
 .brand { display: flex; align-items: center; gap: 12px; font-family: Georgia, serif; font-size: 20px; letter-spacing: .025em; text-shadow: 0 2px 16px #14261b80; }
@@ -66,6 +67,12 @@ kbd { font: 10px "Avenir Next", sans-serif; border: 1px solid #e4e9dc45; border-
 .vehicle-hud strong { display: block; font-size: 36px; font-variant-numeric: tabular-nums; }
 .vehicle-hud small { font-size: 12px; font-weight: normal; }
 .vehicle-hud p { font-size: 10px; line-height: 1.8; margin: 5px 0 0; color: #d5e3ea; }
+#flight-hud { top: 105px; right: 36px; bottom: auto; left: auto; transform: none; min-width: 260px; text-align: left; }
+#flight-hud strong { font-size: 28px; }
+.police-hud { position: absolute; top: 90px; left: 50%; transform: translateX(-50%); width: min(340px, 36vw); padding: 14px 18px; border: 1px solid #a8cfff; border-radius: 8px; background: #122d49ed; text-align: center; }
+.police-hud strong { color: #ffe0a0; font-size: 14px; }
+.police-hud p { margin: 7px 0 0; color: #e0ebf6; font-size: 11px; line-height: 1.5; }
+.hud:has(#flight-hud:not([hidden])) .quest { display: none; }
 .hud:has(.vehicle-hud:not([hidden])) .interaction { bottom: 196px; }
 .quest { position: absolute; bottom: 38px; left: 36px; border-left: 2px solid #cbbf92b0; padding-left: 17px; text-shadow: 0 2px 15px #14261b; }
 .quest-title { display: flex; gap: 10px; align-items: center; font-family: Georgia, serif; font-size: 19px; margin: 9px 0 7px; }

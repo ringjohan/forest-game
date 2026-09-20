@@ -3,6 +3,10 @@ import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.j
 import { Character } from "./character";
 import type { CityAssets } from "./city-assets";
 import type { House } from "./world-types";
+import { CITY_ORIGIN, CITY_ROTATION, cityToWorld, onAirportApproach, onForestApproach } from "./geography";
+import { circleIntersectsFootprint, footprintCorners, footprintsIntersect } from "./collision";
+import type { Footprint } from "./collision";
+import { createBmw } from "./bmw";
 
 export interface CityVenue extends House {
   kind: "cafe" | "restaurant" | "shop";
@@ -13,7 +17,8 @@ export const CITY_LIMIT = 352;
 export const CITY_SIZE = 720;
 export const CITY_SPAWN = new THREE.Vector3(-319, 0, 300);
 export const CITY_FOREST_GATE = { x: -338, z: 304, halfWidth: 16 };
-const STREETS = Array.from({ length: 12 }, (_, i) => -330 + i * 60);
+export const CITY_STREETS = Array.from({ length: 12 }, (_, i) => -330 + i * 60);
+const STREETS = CITY_STREETS;
 const ROAD_WIDTH = 16;
 const SPORT_CAR_LENGTH = 4.6;
 
@@ -35,15 +40,21 @@ const DISTRICTS: Record<District, { name: string; color: number; height: number;
   residential: { name: "Lindkvarteren · Bostäder och balkonger", color: 0xd0c4ae, height: 17, variation: 0.2 },
   warehouse: { name: "Magasinskvarteren · Tegel och mat", color: 0xad7861, height: 8, variation: 0.07 },
 };
-type VehicleKind = "taxi" | "car" | "bus" | "police" | "van";
+export type VehicleKind = "taxi" | "car" | "bus" | "police" | "van" | "bmw";
 const VEHICLE_NAMES: Record<VehicleKind, string> = {
   taxi: "Gul taxi", car: "Sportbil", bus: "Stadsbuss", police: "Polisbil", van: "Skåpbil",
+  bmw: "BMW Sport · 400 km/h",
 };
 
 export type Vehicle = {
   group: THREE.Group;
   kind: VehicleKind;
   radius: number;
+  halfWidth: number;
+  halfLength: number;
+  centerX: number;
+  centerZ: number;
+  policeDuty: boolean;
   speed: number;
   maxSpeed: number;
   wheels: THREE.Mesh[];
@@ -64,6 +75,7 @@ export class City {
   private time = 0;
   private readonly blocks: Block[] = [];
   private readonly streetFurniture: { x: number; z: number; radius: number }[] = [];
+  private readonly treeVolumes: { x: number; z: number; radius: number; height: number }[] = [];
   private readonly pedestrians: Pedestrian[] = [];
   private readonly props: THREE.Object3D[] = [];
   private fountain: THREE.Points | null = null;
@@ -199,7 +211,10 @@ export class City {
 
   blocked(x: number, z: number, radius = 0.45): boolean {
     if (!Number.isFinite(x) || !Number.isFinite(z) || !Number.isFinite(radius)) return true;
-    if (Math.abs(x) + radius > CITY_LIMIT || Math.abs(z) + radius > CITY_LIMIT) return true;
+    const global = cityToWorld(new THREE.Vector3(x, 0, z));
+    if ((Math.abs(x) + radius > CITY_LIMIT || Math.abs(z) + radius > CITY_LIMIT)
+      && !onForestApproach(global.x, global.z, radius)
+      && !onAirportApproach(global.x, global.z, radius)) return true;
     for (const b of this.blocks) {
       const dx = Math.max(Math.abs(x - b.x) - b.width / 2, 0);
       const dz = Math.max(Math.abs(z - b.z) - b.depth / 2, 0);
@@ -208,19 +223,52 @@ export class City {
     return this.streetFurniture.some(p => Math.hypot(x - p.x, z - p.z) < radius + p.radius);
   }
 
-  cameraBlocked(x: number, y: number, z: number): boolean {
+  cameraBlocked(x: number, y: number, z: number, radius = 0.4): boolean {
     return this.blocks.some(b => y < b.height + (b.height >= 12 && this.districtKey(b.x, b.z) === "oldtown" ? 4 : 0.5)
-      && Math.abs(x - b.x) < b.width / 2 + 0.4 && Math.abs(z - b.z) < b.depth / 2 + 0.4);
+      && Math.abs(x - b.x) < b.width / 2 + radius && Math.abs(z - b.z) < b.depth / 2 + radius);
+  }
+
+  flightBlocked(x: number, y: number, z: number, radius: number): boolean {
+    return this.cameraBlocked(x, y - radius, z, radius)
+      || this.treeVolumes.some(tree => y - radius < tree.height
+        && Math.hypot(x - tree.x, z - tree.z) < tree.radius + radius)
+      || (y - radius < 4 && this.vehicleBlocked(x, z, radius));
   }
 
   vehicleBlocked(x: number, z: number, radius: number, except?: Vehicle): boolean {
     return this.vehicles.some(v => v !== except
-      && Math.hypot(x - v.group.position.x, z - v.group.position.z) < radius + v.radius);
+      && circleIntersectsFootprint(x, z, radius, this.vehicleFootprint(v)));
+  }
+
+  vehicleFootprint(vehicle: Vehicle, x = vehicle.group.position.x, z = vehicle.group.position.z, heading = vehicle.group.rotation.y): Footprint {
+    const c = Math.cos(heading), s = Math.sin(heading);
+    return {
+      x: x + vehicle.centerX * c + vehicle.centerZ * s,
+      z: z - vehicle.centerX * s + vehicle.centerZ * c,
+      halfWidth: vehicle.halfWidth, halfLength: vehicle.halfLength, heading,
+    };
+  }
+
+  vehiclePoseBlocked(vehicle: Vehicle, x: number, z: number, heading: number): boolean {
+    const shape = this.vehicleFootprint(vehicle, x, z, heading);
+    for (const corner of footprintCorners(shape)) {
+      if (Math.abs(corner.x) <= CITY_LIMIT && Math.abs(corner.z) <= CITY_LIMIT) continue;
+      const global = cityToWorld(new THREE.Vector3(corner.x, 0, corner.z));
+      if (!onForestApproach(global.x, global.z) && !onAirportApproach(global.x, global.z)) return true;
+    }
+    if (this.blocks.some(b => footprintsIntersect(shape, {
+      x: b.x, z: b.z, halfWidth: b.width / 2, halfLength: b.depth / 2, heading: 0,
+    }))) return true;
+    if (this.streetFurniture.some(p => circleIntersectsFootprint(p.x, p.z, p.radius, shape))) return true;
+    if (this.vehicles.some(other => other !== vehicle && footprintsIntersect(shape, this.vehicleFootprint(other)))) return true;
+    return this.officers.some(o => circleIntersectsFootprint(o.character.group.position.x, o.character.group.position.z, 0.5, shape))
+      || this.pedestrians.some(p => circleIntersectsFootprint(p.character.group.position.x, p.character.group.position.z, 0.45, shape));
   }
 
   nearVehicle(position: THREE.Vector3): Vehicle | undefined {
     return this.vehicles
-      .filter(v => Math.abs(v.speed) < 1 && v.group.position.distanceTo(position) < v.radius + 2.4)
+      .filter(v => !v.policeDuty && Math.abs(v.speed) < 1 && Math.abs(position.y) < 3
+        && circleIntersectsFootprint(position.x, position.z, 2.4, this.vehicleFootprint(v)))
       .sort((a, b) => a.group.position.distanceToSquared(position) - b.group.position.distanceToSquared(position))[0];
   }
 
@@ -249,16 +297,46 @@ export class City {
       name: ["Mira", "Elias", "Noor", "Leo", "Ada", "Olle", "Vera", "Amir"][index % 8],
       line: [
         "Jag brukar ta en kaffe här innan jobbet. Uteserveringarna ligger längs kvarterens södra sida. Följ doften av nyrostat!",
-        "Vill du tillbaka till skogen? Gå till terminalen i sydväst och följ den gröna skylten västerut. Tryck E vid skogsutgången, eller fortsätt rakt fram.",
+        "Vill du tillbaka till skogen? Följ den gröna skylten vid terminalen och fortsätt längs stigen. Flygplatsen ligger på andra sidan staden och syns på världskartan.",
         "Fontänen i Centralparken är min favoritplats. Sedan brukar jag ta en promenad förbi tegelhusen i Gamla stan.",
-        "Det är stor skillnad mellan kvarteren! Glastornen ligger i nordost, och de gamla magasinen söder om Gamla stan har fått nya restauranger.",
+        "Det är stor skillnad mellan kvarteren! Glastornen ligger i sydost, och de gamla magasinen väster om Gamla stan har fått nya restauranger.",
       ][index % 4],
     };
   }
 
   vehicleName(vehicle: Vehicle): string { return VEHICLE_NAMES[vehicle.kind]; }
 
+  drawWorldMap(ctx: CanvasRenderingContext2D): void {
+    ctx.save();
+    ctx.translate(CITY_ORIGIN.x, CITY_ORIGIN.z);
+    ctx.rotate(-CITY_ROTATION);
+    ctx.fillStyle = "#647781";
+    ctx.fillRect(-360, -360, 720, 720);
+    ctx.fillStyle = "#253647";
+    for (const street of STREETS) {
+      ctx.fillRect(street - 8, -360, 16, 720);
+      ctx.fillRect(-360, street - 8, 720, 16);
+    }
+    for (const b of this.blocks) {
+      ctx.fillStyle = `#${DISTRICTS[this.districtKey(b.x, b.z)].color.toString(16)}`;
+      ctx.fillRect(b.x - b.width / 2, b.z - b.depth / 2, b.width, b.depth);
+    }
+    ctx.fillStyle = "#61936f";
+    ctx.fillRect(-18, -18, 36, 36);
+    ctx.fillRect(42, -18, 36, 36);
+    for (const vehicle of this.vehicles) {
+      ctx.fillStyle = vehicle.kind === "police" ? "#6eb4ff" : "#ffd878";
+      ctx.fillRect(vehicle.group.position.x - 2, vehicle.group.position.z - 2, 4, 4);
+    }
+    for (const venue of this.venues) {
+      ctx.fillStyle = venue.kind === "cafe" ? "#f3c57b" : venue.kind === "restaurant" ? "#ed9585" : "#a7dce4";
+      ctx.fillRect(venue.entrance.x - 3, venue.entrance.z - 3, 6, 6);
+    }
+    ctx.restore();
+  }
+
   enter(vehicle: Vehicle): void {
+    if (vehicle.policeDuty) throw new Error("En polisbil i tjänst kan inte lånas.");
     vehicle.automatic = false;
     vehicle.speed = 0;
     this.activeVehicle = vehicle;
@@ -269,8 +347,10 @@ export class City {
     if (!vehicle || Math.abs(vehicle.speed) > 0.8) return null;
     const heading = vehicle.group.rotation.y;
     for (const angle of [Math.PI / 2, -Math.PI / 2, Math.PI, 0]) {
-      const x = vehicle.group.position.x + Math.sin(heading + angle) * (vehicle.radius + 1.1);
-      const z = vehicle.group.position.z + Math.cos(heading + angle) * (vehicle.radius + 1.1);
+      const offset = (Math.abs(Math.sin(angle)) > 0.5 ? vehicle.halfWidth : vehicle.halfLength) + 1.1;
+      const center = this.vehicleFootprint(vehicle);
+      const x = center.x + Math.sin(heading + angle) * offset;
+      const z = center.z + Math.cos(heading + angle) * offset;
       if (!this.blocked(x, z) && !this.vehicleBlocked(x, z, 0.5) && !this.pedestrianBlocked(x, z, 0.5)) {
         vehicle.speed = 0;
         this.activeVehicle = null;
@@ -283,26 +363,51 @@ export class City {
   drive(dt: number, throttle: number, steering: number, brake: boolean): void {
     const v = this.activeVehicle;
     if (!v) return;
-    const acceleration = v.kind === "bus" ? 7 : 12;
-    if (brake) v.speed = THREE.MathUtils.damp(v.speed, 0, 9, dt);
+    const acceleration = v.kind === "bmw" ? 26 : v.kind === "bus" ? 7 : 12;
+    if (brake) v.speed = THREE.MathUtils.damp(v.speed, 0, v.kind === "bmw" ? 12 : 9, dt);
     else if (throttle !== 0) v.speed += throttle * acceleration * dt;
-    else v.speed = THREE.MathUtils.damp(v.speed, 0, 0.7, dt);
+    else v.speed = THREE.MathUtils.damp(v.speed, 0, v.kind === "bmw" ? 0.25 : 0.7, dt);
     v.speed = THREE.MathUtils.clamp(v.speed, -7, v.maxSpeed);
     if (Math.abs(v.speed) < 0.03) v.speed = 0;
-    v.group.rotation.y -= steering * Math.min(Math.abs(v.speed) / 5, 1) * Math.sign(v.speed) * dt * 1.25;
-    // Substeps keep fast vehicles from tunnelling through pedestrians, cars or facades.
-    const steps = Math.max(1, Math.ceil(Math.abs(v.speed) * dt / 0.4));
+    const stability = v.kind === "bmw" ? THREE.MathUtils.clamp(16 / (Math.abs(v.speed) + 8), 0.22, 1) : 1;
+    const turn = -steering * Math.min(Math.abs(v.speed) / 5, 1) * Math.sign(v.speed) * dt * 1.25 * stability;
+    this.advanceVehicle(v, dt, turn);
+  }
+
+  createPatrol(x: number, z: number, heading: number): Vehicle {
+    const vehicle = this.makeVehicle("police", x, z, heading);
+    vehicle.policeDuty = true;
+    vehicle.maxSpeed = 55;
+    return vehicle;
+  }
+
+  movePatrol(vehicle: Vehicle, dt: number, heading: number, speed: number): boolean {
+    const turn = Math.atan2(Math.sin(heading - vehicle.group.rotation.y), Math.cos(heading - vehicle.group.rotation.y));
+    vehicle.speed = THREE.MathUtils.clamp(speed, 0, vehicle.maxSpeed);
+    return this.advanceVehicle(vehicle, dt, turn);
+  }
+
+  private advanceVehicle(v: Vehicle, dt: number, turn: number): boolean {
+    // Sweep translation and rotation; a 400 km/h car must not skip thin obstacles.
+    const steps = Math.max(1, Math.ceil((Math.abs(v.speed) * dt + Math.abs(turn) * v.radius) / 0.2));
+    let moved = false;
+    let travelled = 0;
     for (let step = 0; step < steps; step++) {
-      const x = v.group.position.x + Math.sin(v.group.rotation.y) * v.speed * dt / steps;
-      const z = v.group.position.z + Math.cos(v.group.rotation.y) * v.speed * dt / steps;
-      if (this.blocked(x, z, v.radius) || this.vehicleBlocked(x, z, v.radius, v)
-        || this.pedestrianBlocked(x, z, v.radius + 0.7)) {
+      const heading = v.group.rotation.y + turn / steps;
+      const x = v.group.position.x + Math.sin(heading) * v.speed * dt / steps;
+      const z = v.group.position.z + Math.cos(heading) * v.speed * dt / steps;
+      if (this.vehiclePoseBlocked(v, x, z, heading)) {
         v.speed = 0;
         break;
       }
+      const distance = Math.hypot(x - v.group.position.x, z - v.group.position.z);
+      moved ||= distance > 0.000001 || Math.abs(heading - v.group.rotation.y) > 0.000001;
+      travelled += distance * Math.sign(v.speed);
+      v.group.rotation.y = heading;
       v.group.position.set(x, 0, z);
     }
-    this.spinWheels(v, dt);
+    this.spinWheels(v, dt, travelled);
+    return moved;
   }
 
   update(dt: number, daylight: number, player: THREE.Vector3): void {
@@ -339,6 +444,12 @@ export class City {
         vehicle.detail.visible = vehicle.group.position.distanceToSquared(player) < 45 ** 2;
         vehicle.body.visible = !vehicle.detail.visible;
       }
+    }
+    for (const officer of this.officers) {
+      officer.character.group.visible = officer.character.group.position.distanceToSquared(player) < 115 ** 2;
+    }
+    for (const person of this.pedestrians) {
+      person.character.group.visible = person.character.group.position.distanceToSquared(player) < 115 ** 2;
     }
     if (dt === 0) return;
     for (const v of this.vehicles) {
@@ -379,7 +490,6 @@ export class City {
     }
     for (const officer of this.officers) {
       const p = officer.character.group.position;
-      officer.character.group.visible = p.distanceToSquared(player) < 115 ** 2;
       const targetZ = officer.home.z + Math.sin(this.time * 0.22) * 5;
       const z = p.z + THREE.MathUtils.clamp(targetZ - p.z, -dt * 1.1, dt * 1.1);
       if (!this.blocked(p.x, z, 0.4) && !this.vehicleBlocked(p.x, z, 1.4)
@@ -392,7 +502,6 @@ export class City {
     }
     for (const person of this.pedestrians) {
       const p = person.character.group.position;
-      person.character.group.visible = p.distanceToSquared(player) < 115 ** 2;
       person.pause = Math.max(0, person.pause - dt);
       let speed = 0;
       if (person.route.length > 1 && person.pause === 0) {
@@ -476,7 +585,7 @@ export class City {
     if (large) {
       ctx.textAlign = "left";
       ctx.font = "bold 11px sans-serif";
-      ctx.fillText("← SKOGSUTGÅNG (E)", -350, 286);
+      ctx.fillText("← SKOGSSTIGEN", -350, 286);
     }
     ctx.translate(position.x, position.z);
     ctx.rotate(-heading + Math.PI);
@@ -496,13 +605,15 @@ export class City {
       || this.pedestrians.some(p => p.character !== except && Math.hypot(x - p.character.group.position.x, z - p.character.group.position.z) < radius + 0.45);
   }
 
-  private spinWheels(v: Vehicle, dt: number): void {
-    const travel = v.speed * dt;
-    for (const wheel of v.wheels) wheel.rotateY(-travel / (0.48 * v.body.scale.y));
+  private spinWheels(v: Vehicle, dt: number, travel = v.speed * dt): void {
+    for (const wheel of v.wheels) {
+      const radius = typeof wheel.userData.radius === "number" ? wheel.userData.radius : 0.48 * v.body.scale.y;
+      wheel.rotateY(-travel / radius);
+    }
     for (const wheel of v.detailWheels) wheel.pivot.rotateX(travel / wheel.radius);
   }
 
-  private signal(axis: Axis): "red" | "amber" | "green" {
+  signal(axis: Axis): "red" | "amber" | "green" {
     const phase = (this.time + (axis === "z" ? 13 : 0)) % 26;
     return phase < 10 ? "green" : phase < 12 ? "amber" : "red";
   }
@@ -579,7 +690,9 @@ export class City {
     this.batch(posts);
     for (const post of posts) this.streetFurniture.push({ x: post.x, z: post.z, radius: 0.25 });
     this.sign("GRÖNVED · GÅ TILL SKOGEN", -339, 5.2, CITY_FOREST_GATE.z, 18, "#244c36", Math.PI / 2);
-    this.sign("← SKOGEN · E FÖR ATT GÅ TILLBAKA", -319, 3.5, 313, 15, "#244c36");
+    this.sign("NORRHAMN CITY", -341, 5.2, CITY_FOREST_GATE.z, 18, "#123e58", -Math.PI / 2);
+    this.sign("← SKOGEN · FÖLJ STIGEN", -319, 3.5, 313, 15, "#244c36");
+    this.sign("NORRHAMNS FLYGPLATS →", 90, 3.5, -345, 18, "#123e58");
     this.sign("BUSSTERMINAL", -302, 3, 315, 10, "#123e58");
   }
 
@@ -811,6 +924,7 @@ export class City {
       }
       group.position.set(tree.x, 0, tree.z);
       group.scale.setScalar(tree.scale);
+      this.treeVolumes.push({ x: tree.x, z: tree.z, radius: 2.6 * tree.scale, height: 7.8 * tree.scale });
       this.scene.add(group);
       this.props.push(group);
       this.streetFurniture.push({ x: tree.x, z: tree.z, radius: 0.34 * tree.scale });
@@ -871,6 +985,11 @@ export class City {
 
   private makeVehicle(kind: VehicleKind, x: number, z: number, heading: number): Vehicle {
     const group = new THREE.Group();
+    if (kind === "bmw") {
+      const { body, wheels } = createBmw();
+      group.add(body);
+      return this.registerVehicle(group, kind, body, wheels, x, z, heading);
+    }
     const body = new THREE.Group();
     group.add(body);
     const long = kind === "bus" ? 7.4 : kind === "van" ? 4.8 : 4.2;
@@ -986,7 +1105,6 @@ export class City {
     }
     const detail = kind === "car" ? this.assets.car.clone(true) : null;
     const detailWheels: Vehicle["detailWheels"] = [];
-    let radius = Math.hypot(long / 2 + 0.1, 1.3);
     if (detail) {
       const axleNames = ["WheelFrontL", "WheelFrontR", "WheelRearL", "WheelRearR"];
       for (const name of axleNames) {
@@ -1009,25 +1127,37 @@ export class City {
       detail.scale.setScalar(scale);
       detail.position.set(-center.x * scale, -bounds.min.y * scale, -center.z * scale);
       for (const wheel of detailWheels) wheel.radius *= scale;
-      // Both models grow uniformly; collision must cover either silhouette.
+      // Match both LOD silhouettes to the visible asset, not to its old enclosing circle.
       const proxyBounds = new THREE.Box3().setFromObject(body, true);
       const proxySize = proxyBounds.getSize(new THREE.Vector3());
-      body.scale.setScalar(SPORT_CAR_LENGTH / proxySize.z);
+      body.scale.set(size.x * scale / proxySize.x, size.y * scale / proxySize.y, SPORT_CAR_LENGTH / proxySize.z);
       const proxyCenter = proxyBounds.getCenter(new THREE.Vector3());
       body.position.set(-proxyCenter.x * body.scale.x, -proxyBounds.min.y * body.scale.y, -proxyCenter.z * body.scale.z);
-      radius = Math.max(
-        Math.hypot(size.x * scale / 2, size.z * scale / 2),
-        Math.hypot(proxySize.x * body.scale.x / 2, proxySize.z * body.scale.z / 2),
-      ) + 0.1;
       group.add(detail);
       detail.visible = false;
     }
+    return this.registerVehicle(group, kind, body, wheels, x, z, heading, detail, detailWheels);
+  }
+
+  private registerVehicle(
+    group: THREE.Group, kind: VehicleKind, body: THREE.Group, wheels: THREE.Mesh[],
+    x: number, z: number, heading: number, detail: THREE.Group | null = null,
+    detailWheels: Vehicle["detailWheels"] = [],
+  ): Vehicle {
+    const bounds = new THREE.Box3().setFromObject(detail ?? body, true);
+    const size = bounds.getSize(new THREE.Vector3());
+    const center = bounds.getCenter(new THREE.Vector3());
+    if (!(size.x > 0 && size.z > 0)) throw new Error(`Fordonet ${kind} saknar kollisionsmått.`);
+    const halfWidth = size.x / 2;
+    const halfLength = size.z / 2;
+    const radius = Math.hypot(halfWidth, halfLength);
     group.position.set(x, 0, z);
     group.rotation.y = heading;
+    group.name = VEHICLE_NAMES[kind];
     this.scene.add(group);
     const vehicle: Vehicle = {
-      group, kind, radius, speed: 0,
-      maxSpeed: kind === "bus" ? 19 : kind === "car" ? 32 : 25,
+      group, kind, radius, halfWidth, halfLength, centerX: center.x, centerZ: center.z, policeDuty: false, speed: 0,
+      maxSpeed: kind === "bmw" ? 400 / 3.6 : kind === "bus" ? 19 : kind === "car" ? 32 : 25,
       wheels, body, detail, detailWheels, route: [], waypoint: 0, automatic: false,
     };
     this.vehicles.push(vehicle);
@@ -1037,6 +1167,7 @@ export class City {
   private makeVehicles(): void {
     const kinds: VehicleKind[] = ["taxi", "car", "bus", "police", "van"];
     for (let i = 0; i < kinds.length; i++) this.makeVehicle(kinds[i], -315 + i * 7, 307, Math.PI);
+    this.makeVehicle("bmw", -278, 307, Math.PI);
     for (let i = 0; i < 30; i++) {
       const column = i % 6;
       const row = Math.floor(i / 6);

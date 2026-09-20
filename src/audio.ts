@@ -4,6 +4,8 @@ export class ForestAudio {
   private nextBird = 0;
   private engine: OscillatorNode | undefined;
   private engineVolume: GainNode | undefined;
+  private siren: OscillatorNode | undefined;
+  private sirenVolume: GainNode | undefined;
   private cityVolume: GainNode | undefined;
   private cityFilter: BiquadFilterNode | undefined;
   enabled = false;
@@ -42,6 +44,12 @@ export class ForestAudio {
       this.engineVolume.gain.value = 0;
       this.engine.connect(this.engineVolume).connect(this.master);
       this.engine.start();
+      this.siren = this.context.createOscillator();
+      this.siren.type = "sine";
+      this.sirenVolume = this.context.createGain();
+      this.sirenVolume.gain.value = 0;
+      this.siren.connect(this.sirenVolume).connect(this.master);
+      this.siren.start();
     }
     await this.context.resume();
     this.enabled = !this.enabled;
@@ -49,13 +57,15 @@ export class ForestAudio {
     return this.enabled;
   }
 
-  update(elapsed: number, night = false, city = false, speed?: number, playing = true): void {
+  update(elapsed: number, night = false, city = false, speed?: number, playing = true, flying = false, pursuit = false): void {
     if (!this.context || !this.master) return;
     this.engine?.frequency.setTargetAtTime(45 + Math.abs(speed ?? 0) * 5, this.context.currentTime, 0.12);
-    this.engineVolume?.gain.setTargetAtTime(city && speed !== undefined && playing ? 0.24 : 0, this.context.currentTime, 0.15);
+    this.engineVolume?.gain.setTargetAtTime((city || flying) && speed !== undefined && playing ? 0.24 : 0, this.context.currentTime, 0.15);
+    this.siren?.frequency.setTargetAtTime(650 + Math.sin(elapsed * 5) * 200, this.context.currentTime, 0.08);
+    this.sirenVolume?.gain.setTargetAtTime(pursuit && playing ? 0.13 : 0, this.context.currentTime, 0.2);
     this.cityVolume?.gain.setTargetAtTime(city && playing ? 0.3 + Math.sin(elapsed * 0.37) * 0.1 : 0, this.context.currentTime, 0.5);
     this.cityFilter?.frequency.setTargetAtTime(650 + Math.sin(elapsed * 0.2) * 220, this.context.currentTime, 0.6);
-    if (!this.enabled || !playing || elapsed < this.nextBird || night || city) return;
+    if (!this.enabled || !playing || elapsed < this.nextBird || night || city || flying) return;
     this.nextBird = elapsed + 3 + Math.random() * 7;
     const start = this.context.currentTime;
     for (let i = 0; i < 3; i++) {

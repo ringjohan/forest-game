@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { CITY_TRAIL, LANDMARKS, LAKE, SPAWN, WORLD_LIMIT, WORLD_SIZE } from './world-types';
 import type { House } from './world-types';
+import { onForestApproach } from './geography';
 export type { House } from './world-types';
 
 type Point = { x: number; z: number };
@@ -82,6 +83,7 @@ export class World {
   private seed = 19051987;
   private readonly heights = new Float32Array((GRID + 1) * (GRID + 1));
   private readonly circles: Circle[] = [];
+  private readonly treeVolumes: (Circle & { bottom: number; top: number })[] = [];
   private readonly buildings: Building[] = [];
   private readonly collisionCells = new Map<string, Circle[]>();
   private readonly batches = new Map<string, Batch>();
@@ -137,10 +139,26 @@ export class World {
     return nearest;
   }
 
+  flightBlocked(x: number, y: number, z: number, radius: number): boolean {
+    if (Math.abs(x) > HALF + radius + 8 || Math.abs(z) > HALF + radius + 8) return false;
+    if (this.treeVolumes.some(tree => y + radius > tree.bottom && y - radius < tree.top
+      && Math.hypot(x - tree.x, z - tree.z) < tree.radius + radius)) return true;
+    return this.buildings.some(building => {
+      if (y - radius > this.heightAt(building.x, building.z) + 10) return false;
+      const dx = x - building.x;
+      const dz = z - building.z;
+      const c = Math.cos(building.rotation);
+      const s = Math.sin(building.rotation);
+      return Math.abs(dx * c - dz * s) < building.halfX + radius
+        && Math.abs(dx * s + dz * c) < building.halfZ + radius;
+    });
+  }
+
   blocked(x: number, z: number, radius = 0.45): boolean {
     if (!Number.isFinite(x) || !Number.isFinite(z) || !Number.isFinite(radius)) return true;
     radius = Math.max(0, radius);
-    if (Math.abs(x) + radius > WORLD_LIMIT || Math.abs(z) + radius > WORLD_LIMIT) return true;
+    if ((Math.abs(x) + radius > WORLD_LIMIT || Math.abs(z) + radius > WORLD_LIMIT)
+      && !onForestApproach(x, z, radius)) return true;
     // A conservative offset ellipse keeps the capsule safely clear of the waterline.
     if (this.lakeDistance(x, z, radius + 1.5) < 1) return true;
     for (const building of this.buildings) {
@@ -243,7 +261,7 @@ export class World {
     const lake = this.lakeDistance(x, z);
     const bed = -5.8 + Math.min(lake * lake, 1) * 3.7;
     height = THREE.MathUtils.lerp(bed, height, smooth(0.94, 1.19, lake));
-    return height;
+    return height * (1 - smooth(125, 205, z));
   }
 
   private makeTerrain(): void {
@@ -705,6 +723,7 @@ export class World {
     for (let attempt = 0; attempt < 9500 && count < 1080; attempt++) {
       const x = this.range(-203, 203);
       const z = this.range(-203, 203);
+      if (z > 125 && Math.abs(x) < 55 && this.random() < smooth(125, 205, z) * 0.85) continue;
       if (this.lakeDistance(x, z, 4) < 1.07 || this.pathDistance(x, z) < 4.5) continue;
       if (this.inIntroVista(x, z)) continue;
       if (Math.hypot(x - SPAWN.x, z - SPAWN.z) < 7) continue;
@@ -738,6 +757,7 @@ export class World {
 
   private tree(x: number, z: number, type: number, height: number): void {
     const y = this.heightAt(x, z) - 0.08;
+    this.treeVolumes.push({ x, z, radius: height * 0.25, bottom: y, top: y + height * 1.12 });
     const radius = height * (type === 2 ? 0.023 : 0.031);
     const yaw = this.random() * Math.PI * 2;
     const bark = type === 2 ? '#e1ddd0' : type === 1 ? '#89715a' : '#76624d';
@@ -883,23 +903,27 @@ export class World {
       vertexShader: `
         #include <common>
         #include <fog_pars_vertex>
+        #include <logdepthbuf_pars_vertex>
         varying vec3 vWorld;
         void main() {
           vec4 world = modelMatrix * vec4(position, 1.0);
           vWorld = world.xyz;
           vec4 mvPosition = viewMatrix * world;
           gl_Position = projectionMatrix * mvPosition;
+          #include <logdepthbuf_vertex>
           #include <fog_vertex>
         }
       `,
       fragmentShader: `
         #include <common>
         #include <fog_pars_fragment>
+        #include <logdepthbuf_pars_fragment>
         uniform float uTime;
         uniform vec2 uLake;
         uniform vec2 uRadii;
         varying vec3 vWorld;
         void main() {
+          #include <logdepthbuf_fragment>
           vec2 p = vWorld.xz;
           float a = p.x * 0.67 + p.y * 0.41 + uTime * 0.66;
           float b = p.x * -0.38 + p.y * 0.92 - uTime * 0.47;
@@ -954,6 +978,7 @@ export class World {
     this.batch('mountain', geometry, material, false);
     for (let i = 0; i < 22; i++) {
       const angle = i / 22 * Math.PI * 2;
+      if (Math.sin(angle) > 0) continue;
       const distance = this.range(315, 460);
       const height = this.range(65, 135);
       this.add('mountain', Math.cos(angle) * distance, height / 2 - 18, Math.sin(angle) * distance,
