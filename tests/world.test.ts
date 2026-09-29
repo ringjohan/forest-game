@@ -8,6 +8,8 @@ import { Aviation, AIRPORT_SPAWN, FLIGHT_CEILING, FLIGHT_VIEW_DISTANCE, flightFo
 import { circleIntersectsFootprint, footprintsIntersect } from "../src/collision";
 import { TrafficPolice, SPEED_LIMIT_KMH, JAIL_SECONDS, ESCAPE_SECONDS } from "../src/police";
 import { Jail } from "../src/jail";
+import { CrashEffects } from "../src/crash-effects";
+import type { AircraftImpact } from "../src/crash-effects";
 
 const results = document.querySelector<HTMLPreElement>("#results")!;
 const lines: string[] = [];
@@ -216,6 +218,91 @@ async function run(): Promise<void> {
     assert(escaped && !traffic.wanted, "Cannot escape after sustained safe distance");
   }));
 
+  function contactFixture(driver: Vehicle): Vehicle {
+    for (const [i, vehicle] of city.vehicles.entries()) {
+      vehicle.group.position.set(1000 + i * 10, 0, 1000);
+      vehicle.automatic = false;
+    }
+    const patrol = city.vehicles.find(vehicle => vehicle.policeDuty);
+    assert(patrol !== undefined, "No patrol fixture");
+    patrol.group.position.set(330, 0, 0);
+    patrol.group.rotation.y = 0;
+    driver.group.position.set(330, 0, -20);
+    driver.group.rotation.y = 0;
+    driver.speed = 30;
+    traffic.observeDriving(driver.group.position.clone(), driver, 1);
+    assert(traffic.wanted, "Contact fixture is not wanted");
+    return patrol;
+  }
+
+  test("Wanted pedestrians are arrested on the first touch, but not for proximity or while unavailable", () => withDriver(driver => {
+    const patrol = contactFixture(driver);
+    const shape = city.vehicleFootprint(patrol);
+    const subject = { position: new THREE.Vector3(shape.x + shape.halfWidth + 0.46, 0, shape.z), vehicle: null, available: true };
+    assert(!traffic.checkContact(subject), "Arrested without touching");
+    subject.position.x -= 0.011;
+    subject.available = false;
+    assert(!traffic.checkContact(subject), "Arrested indoors");
+    subject.available = true;
+    subject.position.y = 4;
+    assert(!traffic.checkContact(subject), "Arrested above the police car");
+    subject.position.y = 0;
+    assert(traffic.checkContact(subject), "Tiny side contact was ignored");
+    assert(traffic.update(0, subject) === null && traffic.wanted, "Pause did not stop arrest processing");
+    assert(traffic.update(1 / 120, subject) === "arrest", "Contact still requires an arrest timer");
+    assert(!traffic.checkContact(subject), "Contact arrests a non-wanted player");
+  }));
+
+  test("Vehicle side contacts arrest instantly regardless of heading or speed", () => withDriver(driver => {
+    for (const heading of [0, Math.PI / 2, Math.PI / 4]) {
+      const patrol = contactFixture(driver);
+      driver.group.rotation.y = heading;
+      const shape = city.vehicleFootprint(driver);
+      const patrolShape = city.vehicleFootprint(patrol);
+      const extent = Math.abs(Math.cos(heading)) * shape.halfWidth + Math.abs(Math.sin(heading)) * shape.halfLength;
+      const target = { ...shape, x: patrolShape.x + patrolShape.halfWidth + extent - 0.001, z: patrolShape.z };
+      driver.speed = 400 / 3.6;
+      const subject = { position: driver.group.position, vehicle: driver, available: true };
+      assert(traffic.checkContact(subject, target), `High-speed contact missed at heading=${heading}`);
+      assert(traffic.update(1 / 120, subject) === "arrest", "Fast driver was not arrested immediately");
+    }
+  }));
+
+  test("Swept driving contact catches a 400 km/h car before collision resolution erases the touch", () => withDriver(driver => {
+    for (const dt of [1 / 60, 0.04, 0.1]) {
+      const patrol = contactFixture(driver);
+      driver.group.position.set(330, 0, -8);
+      driver.speed = 400 / 3.6;
+      const subject = { position: driver.group.position, vehicle: driver, available: true };
+      for (let i = 0; i < 20 && driver.speed > 0; i++) {
+        city.drive(dt, 1, 0, false, shape => traffic.checkContact(subject, shape));
+      }
+      assert(!footprintsIntersect(city.vehicleFootprint(driver), city.vehicleFootprint(patrol)), "Contact penetrated the police car");
+      assert(traffic.update(dt, subject) === "arrest", `Swept contact was lost at dt=${dt}`);
+    }
+  }));
+
+  test("A moving patrol arrests a pedestrian at contact without driving through them", () => withDriver(driver => {
+    const patrol = contactFixture(driver);
+    const subject = { position: new THREE.Vector3(330, 0, 10), vehicle: null, available: true };
+    let event: string | null = null;
+    for (let i = 0; i < 200 && !event; i++) event = traffic.update(0.04, subject);
+    assert(event === "arrest", "Patrol stopped short of pedestrian contact");
+    assert(!circleIntersectsFootprint(subject.position.x, subject.position.z, 0.45, city.vehicleFootprint(patrol)),
+      "Patrol drove through pedestrian");
+  }));
+
+  test("Even touching footprints cannot arrest through a building wall", () => withDriver(driver => {
+    const patrol = contactFixture(driver);
+    const entrance = city.venues[0].entrance;
+    patrol.group.position.set(entrance.x, 0, entrance.z + 1.5);
+    const shape = city.vehicleFootprint(patrol);
+    const subject = { position: new THREE.Vector3(shape.x, 0, shape.z - shape.halfLength - 0.44), vehicle: null, available: true };
+    assert(circleIntersectsFootprint(subject.position.x, subject.position.z, 0.45, shape),
+      "Wall fixture is not in contact");
+    assert(!traffic.checkContact(subject), "Contact caused arrest through a wall");
+  }));
+
   test("Detention lasts one minute and the cell is a bounded playable room", () => {
     assert(JAIL_SECONDS === 60, "Detention is not one minute");
     const jail = new Jail();
@@ -300,10 +387,107 @@ async function run(): Promise<void> {
     assert(camera.position.distanceTo(aviation.plane.position) > 5, "Chase camera is inside aircraft");
   });
 
-  test("Aircraft collision reports recovery instead of passing through obstacles", () => {
-    const message = aviation.update(0.04, new Set(["KeyW"]), () => 0, () => true);
+  test("Aircraft collision shows one crash, locks controls and recovers only after four seconds", () => {
+    const impacts: AircraftImpact[] = [];
+    const position = aviation.plane.position.clone();
+    const message = aviation.update(0.04, new Set(["KeyW"]), () => 0, () => true, impact => impacts.push(impact));
     assert(typeof message === "string" && message.length > 0, "Collision not reported");
-    assert(aviation.grounded && aviation.speed === 0, "Collision did not recover safely");
+    assert(impacts.length === 1 && !impacts[0].ground, "Object impact not delivered exactly once");
+    assert(aviation.crashRemaining === 4 && !aviation.plane.visible && !aviation.cockpit, "Crash is not visible in external view");
+    assert(aviation.exit(() => false) === null, "Can exit during crash");
+    aviation.toggleView();
+    aviation.update(0, new Set(), () => 0, () => true);
+    assert(aviation.crashRemaining === 4 && !aviation.cockpit, "Pause or view key alters crash");
+    for (let i = 0; i < 7; i++) aviation.update(0.5, new Set(["KeyW"]), () => 0, () => true, impact => impacts.push(impact));
+    assert(aviation.plane.position.equals(position) && impacts.length === 1, "Crash moves or repeats");
+    aviation.update(0.5, new Set(), () => 0, () => false);
+    assert(aviation.grounded && aviation.speed === 0 && aviation.plane.visible, "Collision did not recover safely");
+  });
+
+  test("Off-runway ground crashes report the actual impact site at different frame rates", () => {
+    for (const dt of [1 / 60, 0.04, 0.1]) {
+      const aircraft = new Aviation();
+      aircraft.enter();
+      aircraft.grounded = false;
+      aircraft.speed = 50;
+      aircraft.plane.position.set(740, 1.56, 750);
+      const impacts: AircraftImpact[] = [];
+      for (let i = 0; i < 40 && !impacts.length; i++) {
+        aircraft.update(dt, new Set(["ArrowUp"]), () => 0, () => false, impact => impacts.push(impact));
+      }
+      assert(impacts.length === 1 && impacts[0].ground, `Missing ground crash at dt=${dt}`);
+      assert(impacts[0].contact.x === 740 && impacts[0].contact.z >= 750, "Scorch moved to airport spawn");
+    }
+  });
+
+  test("Fire and smoke animate, while ground soot persists and follows the terrain", () => {
+    const effects = new CrashEffects();
+    const scene = new THREE.Scene();
+    scene.add(effects.group);
+    effects.impact({ position: new THREE.Vector3(30, 4, 40), contact: new THREE.Vector3(30, 2, 40), ground: true },
+      scene, [], x => x * 0.1);
+    const scar = effects.group.children[0];
+    const soot = scar.children[0];
+    assert(soot instanceof THREE.Mesh, "Missing ground soot");
+    const points = soot.geometry.attributes.position;
+    for (let i = 0; i < points.count; i++) {
+      assert(Math.abs(points.getY(i) - points.getX(i) * 0.1 - 0.085) < 0.00001, "Soot floats above sloping ground");
+    }
+    const fire = effects.group.children[1];
+    assert(fire.children.length > 30, "Missing fireball particles");
+    const before = fire.children[0].position.clone();
+    effects.update(0);
+    assert(fire.children[0].position.equals(before), "Paused fire moves");
+    effects.update(0.5);
+    assert(!fire.children[0].position.equals(before), "Fire does not animate");
+    effects.update(12);
+    assert(effects.group.children.length === 1 && scar.parent === effects.group, "Soot vanished with the smoke");
+  });
+
+  test("Building damage projects onto rotated instanced geometry without removing the building", () => {
+    const scene = new THREE.Scene();
+    const building = new THREE.InstancedMesh(new THREE.BoxGeometry(12, 20, 12), new THREE.MeshBasicMaterial(), 1);
+    building.setMatrixAt(0, new THREE.Matrix4().makeTranslation(0, 10, 0));
+    const district = new THREE.Group();
+    district.position.set(40, 0, 60);
+    district.rotation.y = Math.PI / 3;
+    district.add(building);
+    scene.add(district);
+    scene.updateMatrixWorld(true);
+    const contact = district.localToWorld(new THREE.Vector3(0, 10, -6.5));
+    const effects = new CrashEffects();
+    scene.add(effects.group);
+    effects.impact({ position: contact, contact, ground: false }, scene, [], () => 0);
+    const scar = effects.group.children[0];
+    const decal = scar.children[0];
+    assert(decal instanceof THREE.Mesh && decal.geometry.attributes.position.count > 0, "No projected building damage");
+    assert(scar.children.length > 10 && building.parent === district, "Missing debris or removed building");
+    decal.geometry.computeBoundingBox();
+    const center = decal.geometry.boundingBox!.getCenter(new THREE.Vector3());
+    assert(center.distanceTo(contact) < 2, "Building scar uses the wrong coordinate system");
+  });
+
+  test("A wing hitting the real airport hangar produces fire and damage at the collision", () => {
+    const aircraft = new Aviation();
+    const effects = new CrashEffects();
+    const scene = new THREE.Scene();
+    scene.add(aircraft.group, effects.group);
+    aircraft.enter();
+    aircraft.grounded = false;
+    aircraft.speed = 70;
+    aircraft.plane.position.set(813, 7, 700);
+    const message = aircraft.update(0.04, new Set(), () => 0, () => false,
+      impact => effects.impact(impact, scene, [aircraft.plane], () => 0));
+    assert(message?.startsWith("Krasch!") === true, "Wing passed through hangar");
+    assert(effects.group.children.length === 2, "Real crash did not create effects");
+    const decal = effects.group.children[0].children[0];
+    assert(decal instanceof THREE.Mesh && decal.geometry.attributes.position.count > 0, "Real hangar has no damage");
+  });
+
+  test("Low flying aircraft collide with street lamps and traffic-light poles, but can fly above them", () => {
+    assert(city.flightBlocked(-281, 4, -300, 0.3), "Street lamp is not solid in flight");
+    assert(city.flightBlocked(-339, 4, -339, 0.3), "Traffic-light pole is not solid in flight");
+    assert(!city.flightBlocked(-339, 7, -339, 0.3), "Traffic-light pole blocks empty sky");
   });
 
   test("Automatic takeoff can be followed by runway landing, braking and exit", () => {

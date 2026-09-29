@@ -74,7 +74,7 @@ export class City {
   activeVehicle: Vehicle | null = null;
   private time = 0;
   private readonly blocks: Block[] = [];
-  private readonly streetFurniture: { x: number; z: number; radius: number }[] = [];
+  private readonly streetFurniture: { x: number; z: number; radius: number; height: number }[] = [];
   private readonly treeVolumes: { x: number; z: number; radius: number; height: number }[] = [];
   private readonly pedestrians: Pedestrian[] = [];
   private readonly props: THREE.Object3D[] = [];
@@ -232,6 +232,8 @@ export class City {
     return this.cameraBlocked(x, y - radius, z, radius)
       || this.treeVolumes.some(tree => y - radius < tree.height
         && Math.hypot(x - tree.x, z - tree.z) < tree.radius + radius)
+      || this.streetFurniture.some(p => y + radius > 0 && y - radius < p.height
+        && Math.hypot(x - p.x, z - p.z) < p.radius + radius)
       || (y - radius < 4 && this.vehicleBlocked(x, z, radius));
   }
 
@@ -360,7 +362,7 @@ export class City {
     return null;
   }
 
-  drive(dt: number, throttle: number, steering: number, brake: boolean): void {
+  drive(dt: number, throttle: number, steering: number, brake: boolean, contact?: (shape: Footprint) => boolean): void {
     const v = this.activeVehicle;
     if (!v) return;
     const acceleration = v.kind === "bmw" ? 26 : v.kind === "bus" ? 7 : 12;
@@ -371,7 +373,7 @@ export class City {
     if (Math.abs(v.speed) < 0.03) v.speed = 0;
     const stability = v.kind === "bmw" ? THREE.MathUtils.clamp(16 / (Math.abs(v.speed) + 8), 0.22, 1) : 1;
     const turn = -steering * Math.min(Math.abs(v.speed) / 5, 1) * Math.sign(v.speed) * dt * 1.25 * stability;
-    this.advanceVehicle(v, dt, turn);
+    this.advanceVehicle(v, dt, turn, contact);
   }
 
   createPatrol(x: number, z: number, heading: number): Vehicle {
@@ -381,13 +383,13 @@ export class City {
     return vehicle;
   }
 
-  movePatrol(vehicle: Vehicle, dt: number, heading: number, speed: number): boolean {
+  movePatrol(vehicle: Vehicle, dt: number, heading: number, speed: number, contact?: (shape: Footprint) => boolean): boolean {
     const turn = Math.atan2(Math.sin(heading - vehicle.group.rotation.y), Math.cos(heading - vehicle.group.rotation.y));
     vehicle.speed = THREE.MathUtils.clamp(speed, 0, vehicle.maxSpeed);
-    return this.advanceVehicle(vehicle, dt, turn);
+    return this.advanceVehicle(vehicle, dt, turn, contact);
   }
 
-  private advanceVehicle(v: Vehicle, dt: number, turn: number): boolean {
+  private advanceVehicle(v: Vehicle, dt: number, turn: number, contact?: (shape: Footprint) => boolean): boolean {
     // Sweep translation and rotation; a 400 km/h car must not skip thin obstacles.
     const steps = Math.max(1, Math.ceil((Math.abs(v.speed) * dt + Math.abs(turn) * v.radius) / 0.2));
     let moved = false;
@@ -396,7 +398,7 @@ export class City {
       const heading = v.group.rotation.y + turn / steps;
       const x = v.group.position.x + Math.sin(heading) * v.speed * dt / steps;
       const z = v.group.position.z + Math.cos(heading) * v.speed * dt / steps;
-      if (this.vehiclePoseBlocked(v, x, z, heading)) {
+      if (contact?.(this.vehicleFootprint(v, x, z, heading)) || this.vehiclePoseBlocked(v, x, z, heading)) {
         v.speed = 0;
         break;
       }
@@ -688,7 +690,7 @@ export class City {
       x: -340, y: 2.6, z: CITY_FOREST_GATE.z + side * 9, w: 0.35, h: 5.2, d: 0.35, color: 0x4d6251,
     }));
     this.batch(posts);
-    for (const post of posts) this.streetFurniture.push({ x: post.x, z: post.z, radius: 0.25 });
+    for (const post of posts) this.streetFurniture.push({ x: post.x, z: post.z, radius: 0.25, height: 5.2 });
     this.sign("GRÖNVED · GÅ TILL SKOGEN", -339, 5.2, CITY_FOREST_GATE.z, 18, "#244c36", Math.PI / 2);
     this.sign("NORRHAMN CITY", -341, 5.2, CITY_FOREST_GATE.z, 18, "#123e58", -Math.PI / 2);
     this.sign("← SKOGEN · FÖLJ STIGEN", -319, 3.5, 313, 15, "#244c36");
@@ -835,16 +837,16 @@ export class City {
       const x = b.x + dx;
       const z = front + 2.4;
       this.placeProp(this.assets.furniture, x, z, 1.1, Math.PI / 2);
-      this.streetFurniture.push({ x, z, radius: 0.75 });
+      this.streetFurniture.push({ x, z, radius: 0.75, height: 1.1 });
       for (const side of [-1, 1]) {
-        this.streetFurniture.push({ x: x + side * 0.95, z, radius: 0.35 });
+        this.streetFurniture.push({ x: x + side * 0.95, z, radius: 0.35, height: 1.1 });
       }
       details.push({ x, y: 0.9, z, w: 0.12, h: 0.2, d: 0.12, color: 0xf4efdd });
     }
     this.localLights.push({ position: new THREE.Vector3(b.x, 3, front + 1.4), color: 0xffc588 });
     details.push({ x: b.x + 7, y: 0.45, z: front + 2.4, w: 1.5, h: 0.8, d: 0.7, color: 0x70604b });
     details.push({ x: b.x + 7, y: 1, z: front + 2.4, w: 1.6, h: 0.6, d: 0.8, color: 0x4b7651 });
-    this.streetFurniture.push({ x: b.x + 7, z: front + 2.4, radius: 0.9 });
+    this.streetFurniture.push({ x: b.x + 7, z: front + 2.4, radius: 0.9, height: 1.3 });
   }
 
   private makeStreetLife(): void {
@@ -857,7 +859,7 @@ export class City {
         this.placeProp(this.assets.lamp, x, z, 1.4);
         lamps.push({ x, y: 4.6, z, w: 0.12, h: 0.14, d: 0.12, color: 0xffe1b3 });
         this.localLights.push({ position: new THREE.Vector3(x, 4.6, z), color: 0xffd9a3 });
-        this.streetFurniture.push({ x, z, radius: 0.2 });
+        this.streetFurniture.push({ x, z, radius: 0.2, height: 4.8 });
       }
     }
     for (const [x, z] of [[-305, 288], [-297, 288], [0, 10], [60, 10], [0, -10], [60, -10]]) {
@@ -870,7 +872,7 @@ export class City {
     }
     for (const x of [-308, -294]) {
       details.push({ x, y: 1.8, z: 287, w: 0.2, h: 3.6, d: 0.2, color: 0x394650 });
-      this.streetFurniture.push({ x, z: 287, radius: 0.2 });
+      this.streetFurniture.push({ x, z: 287, radius: 0.2, height: 3.6 });
     }
     details.push({ x: -301, y: 3.6, z: 288, w: 15, h: 0.2, d: 4, color: 0x486d7b });
     this.batch(details);
@@ -927,7 +929,7 @@ export class City {
       this.treeVolumes.push({ x: tree.x, z: tree.z, radius: 2.6 * tree.scale, height: 7.8 * tree.scale });
       this.scene.add(group);
       this.props.push(group);
-      this.streetFurniture.push({ x: tree.x, z: tree.z, radius: 0.34 * tree.scale });
+      this.streetFurniture.push({ x: tree.x, z: tree.z, radius: 0.34 * tree.scale, height: 7.8 * tree.scale });
     }
     const rim = new THREE.Mesh(new THREE.TorusGeometry(3, 0.35, 8, 40), this.chrome);
     rim.rotation.x = Math.PI / 2;
@@ -938,7 +940,7 @@ export class City {
     water.rotation.x = -Math.PI / 2;
     water.position.set(60, 0.45, 0);
     this.scene.add(water);
-    this.streetFurniture.push({ x: 60, z: 0, radius: 3.4 });
+    this.streetFurniture.push({ x: 60, z: 0, radius: 3.4, height: 0.85 });
     const droplets = new THREE.BufferGeometry();
     droplets.setAttribute("position", new THREE.Float32BufferAttribute(new Float32Array(120 * 3), 3));
     droplets.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, 1.8, 0), 4);
@@ -960,7 +962,7 @@ export class City {
           const px = x + side * 9;
           const pz = z + side * 9;
           poles.push({ x: px, y: 2.7, z: pz, w: 0.18, h: 5.4, d: 0.18, color: 0x34424e });
-          this.streetFurniture.push({ x: px, z: pz, radius: 0.2 });
+          this.streetFurniture.push({ x: px, z: pz, radius: 0.2, height: 5.4 });
           for (const axis of ["x", "z"] as const) {
             const lx = px + (axis === "z" ? -side * 3 : 0);
             const lz = pz + (axis === "x" ? -side * 3 : 0);

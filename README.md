@@ -35,7 +35,8 @@ flygplatsens tillgänglighet, befintliga hus, start, vybyte, flyggränser,
 landning vid olika bildfrekvenser, kollisionshantering, piltangenternas
 flygstyrning och faktisk stigning till 10 000 meter. De verifierar också
 flygplanets gångkollision, bilarnas verkliga bredd, BMW:ns uppmätta toppfart,
-rödljusbrott, hastighetsgränsen, polisjakt och möjligheten att komma undan.
+rödljusbrott, hastighetsgränsen, polisjakt, omedelbart gripande vid kontakt,
+krascheffekter, bestående brandskador och möjligheten att komma undan.
 De använder spelets riktiga världs- och flygkod
 i webbläsaren utan extra testberoenden.
 
@@ -170,8 +171,10 @@ För biltrafiken i hela staden gäller **70 km/h**:
   ljuset slår om startar inte en jakt.
 - Polisbilar följer gatunätet och jagar dig med blåljus. Sirener hörs om
   spelets ljud är aktiverat. Patruller i tjänst kan inte lånas.
-- Polisen fångar dig när en patrull kommer nära och du står stilla,
-  kör långsamt eller har klivit ur. Polisen kan inte fånga dig genom husväggar.
+- När du är efterlyst räcker minsta kontakt med en polispatrulls bil
+  för att du omedelbart ska hamna i fängelse. Det gäller både till fots och
+  i bil, oavsett hastighet. Enbart närhet räcker inte, och polisen kan inte
+  fånga dig genom husväggar.
 - Håll dig på säkert avstånd från alla patruller i **20 sammanhängande
   sekunder** för att skaka av dig dem. HUD visar jakt och nedräkning.
 - Om du blir fångad får du tillbringa **60 sekunder i häktet**. Därefter
@@ -208,9 +211,15 @@ Du kan stiga långt över skyskraporna och skogen. Siktavståndet och diset
 anpassas för flygning på hög höjd, och följkameran höjer sig bakom planet
 för att visa landskapet nedanför. Space, Shift och A/D styr inte planet;
 gång- och bilkontrollerna är oförändrade.
-Kollisioner och alltför snabba eller sneda landningar ger ett
-meddelande och återställer planet säkert vid flygplatsen; upptäckter och
-utrustning behålls. Hus, träd och stadsbyggnader går inte att flyga igenom.
+Kollisioner med hinder och alltför snabba eller sneda landningar ger en
+krasch med eldklot, ljussken och stigande rök. Planet försvinner i eldklotet,
+och kameran stannar vid kraschen i fyra sekunder innan planet återställs
+säkert vid flygplatsen. Upptäckter och utrustning behålls.
+Byggnader får synliga brandskador, sprickor och spillror vid träffen,
+men står kvar och kan fortfarande besökas. Vid markkrasch lämnas sot på
+marken, även utanför flygplatsen. De senaste 16 nedslagsplatsernas märken
+finns kvar under spelomgången. Hus, träd och stadsbyggnader går inte att
+flyga igenom. Öppna paneler pausar även kraschsekvensen och röken.
 Snabbresa och svärd är avstängda ombord. Karta, hjälp, dialoger,
 ryggsäck och tappat fönsterfokus pausar även flygningen.
 Flygplats, flygplan och cockpit genereras lokalt utan nya resursnedladdningar.

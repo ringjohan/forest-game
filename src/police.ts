@@ -1,7 +1,8 @@
 import * as THREE from "three";
 import { CITY_STREETS } from "./city";
 import type { City, Vehicle } from "./city";
-import { circleIntersectsFootprint } from "./collision";
+import { circleIntersectsFootprint, footprintsIntersect } from "./collision";
+import type { Footprint } from "./collision";
 
 export const SPEED_LIMIT_KMH = 70;
 export const JAIL_SECONDS = 60;
@@ -16,13 +17,11 @@ type Patrol = {
   route: THREE.Vector3[];
   replan: number;
   stuck: number;
-  contact: number;
   closed: Map<string, number>;
 };
 
 const ROAD_HALF_WIDTH = 8;
 const STOP_LINE = 8;
-const CAPTURE_SECONDS = 1.5;
 const SAFE_DISTANCE = 180;
 const MAX_SPEED = 55;
 
@@ -30,8 +29,7 @@ export class TrafficPolice {
   wanted = false;
   reason = "";
   escapeRemaining = ESCAPE_SECONDS;
-  /** Fraction of the uninterrupted 1.5-second arrest interval. */
-  captureProgress = 0;
+  private contactPending = false;
   private readonly patrols: Patrol[] = [];
   private readonly offenses = new Set<string>();
   private readonly nodes = CITY_STREETS.flatMap(x => CITY_STREETS.map(z => new THREE.Vector3(x, 0, z)));
@@ -58,7 +56,7 @@ export class TrafficPolice {
         vehicle.group.add(lamp);
         return lamp;
       });
-      this.patrols.push({ vehicle, lamps, route: [], replan: 0, stuck: 0, contact: 0, closed: new Map() });
+      this.patrols.push({ vehicle, lamps, route: [], replan: 0, stuck: 0, closed: new Map() });
     }
   }
 
@@ -99,10 +97,8 @@ export class TrafficPolice {
       remaining -= step;
       this.time += step;
       let near = false;
-      let longestContact = 0;
       for (const patrol of this.patrols) {
         if (patrol.vehicle === subject.vehicle || patrol.vehicle === this.city.activeVehicle) {
-          patrol.contact = 0;
           for (const lamp of patrol.lamps) lamp.visible = false;
           continue;
         }
@@ -110,15 +106,12 @@ export class TrafficPolice {
         patrol.lamps.forEach((lamp, index) => { lamp.visible = (Math.floor(this.time * 8) + index) % 2 === 0; });
         const distance = patrol.vehicle.group.position.distanceTo(subject.position);
         near ||= distance <= SAFE_DISTANCE;
-        patrol.contact = this.canCapture(patrol.vehicle, subject) ? patrol.contact + step : 0;
-        longestContact = Math.max(longestContact, patrol.contact);
+        if (subject.available && (this.contactPending || this.canCapture(patrol.vehicle, subject))) {
+          this.clear();
+          return "arrest";
+        }
       }
-      this.captureProgress = Math.min(1, longestContact / CAPTURE_SECONDS);
       this.escapeRemaining = near ? ESCAPE_SECONDS : Math.max(0, this.escapeRemaining - step);
-      if (longestContact + 1e-8 >= CAPTURE_SECONDS) {
-        this.clear();
-        return "arrest";
-      }
       if (this.escapeRemaining <= 1e-8) {
         this.clear();
         return "escaped";
@@ -131,14 +124,14 @@ export class TrafficPolice {
     this.wanted = false;
     this.reason = "";
     this.escapeRemaining = ESCAPE_SECONDS;
-    this.captureProgress = 0;
+    this.contactPending = false;
     this.speeding = 0;
     this.sampledVehicle = null;
     this.offenses.clear();
     for (const patrol of this.patrols) {
       patrol.vehicle.speed = 0;
       patrol.route = [];
-      patrol.replan = patrol.stuck = patrol.contact = 0;
+      patrol.replan = patrol.stuck = 0;
       patrol.closed.clear();
       for (const lamp of patrol.lamps) lamp.visible = false;
     }
@@ -180,14 +173,22 @@ export class TrafficPolice {
     return false;
   }
 
-  private canCapture(vehicle: Vehicle, subject: Subject): boolean {
-    if (!subject.available || Math.abs(subject.position.y - vehicle.group.position.y) > 3
-      || (subject.vehicle && Math.abs(subject.vehicle.speed) > 4)) return false;
-    const from = this.center(vehicle.group.position, vehicle);
-    const to = subject.vehicle ? this.center(subject.vehicle.group.position, subject.vehicle) : subject.position;
-    const range = subject.vehicle ? vehicle.halfLength + subject.vehicle.halfLength + 2 : 6;
+  checkContact(subject: Subject, shape?: Footprint): boolean {
+    if (!this.wanted) return false;
+    const touching = this.patrols.some(patrol => patrol.vehicle !== subject.vehicle
+      && this.canCapture(patrol.vehicle, subject, this.city.vehicleFootprint(patrol.vehicle), shape));
+    this.contactPending ||= touching;
+    return touching;
+  }
+
+  private canCapture(vehicle: Vehicle, subject: Subject, patrolShape = this.city.vehicleFootprint(vehicle), subjectShape?: Footprint): boolean {
+    if (!subject.available || Math.abs(subject.position.y - vehicle.group.position.y) > 2.5) return false;
+    const targetShape = subject.vehicle ? subjectShape ?? this.city.vehicleFootprint(subject.vehicle) : null;
+    if (targetShape ? !footprintsIntersect(patrolShape, targetShape)
+      : !circleIntersectsFootprint(subject.position.x, subject.position.z, 0.45, patrolShape)) return false;
+    const from = new THREE.Vector3(patrolShape.x, 0, patrolShape.z);
+    const to = targetShape ? new THREE.Vector3(targetShape.x, 0, targetShape.z) : subject.position;
     const distance = from.distanceTo(to);
-    if (distance > range) return false;
     const samples = Math.max(1, Math.ceil(distance / 0.3));
     for (let i = 0; i <= samples; i++) {
       const fraction = i / samples;
@@ -240,13 +241,12 @@ export class TrafficPolice {
     // Turn at waypoints, not by cutting diagonally across building corners.
     const rotating = Math.abs(turn) > 0.025;
     const nextHeading = vehicle.group.rotation.y + THREE.MathUtils.clamp(turn, -2.8 * dt, 2.8 * dt);
-    let speed = rotating ? 0 : Math.min(MAX_SPEED, vehicle.speed + 18 * dt, distance / dt, Math.sqrt(48 * distance));
-    if (speed > 0) {
-      const ahead = speed * dt + 1.25;
-      if (this.city.vehiclePoseBlocked(vehicle,
-        position.x + Math.sin(heading) * ahead, position.z + Math.cos(heading) * ahead, heading)) speed = 0;
-    }
-    const moved = this.city.movePatrol(vehicle, dt, nextHeading, speed);
+    const speed = rotating ? 0 : Math.min(MAX_SPEED, vehicle.speed + 18 * dt, distance / dt, Math.sqrt(48 * distance));
+    const moved = this.city.movePatrol(vehicle, dt, nextHeading, speed, shape => {
+      const touching = this.canCapture(vehicle, subject, shape);
+      this.contactPending ||= touching;
+      return touching;
+    });
     patrol.stuck = moved ? 0 : patrol.stuck + dt;
     if (patrol.stuck > 1.25) {
       const axis: Axis = Math.abs(next.x - position.x) > Math.abs(next.z - position.z) ? "x" : "z";
@@ -332,6 +332,9 @@ export class TrafficPolice {
     if (from.distanceTo(start.position) > 0.1) result.unshift(start.position.clone());
     const curb = this.roadPoint(target, Math.max(0, ROAD_HALF_WIDTH - patrol.vehicle.radius - 0.5)).position;
     if (curb.distanceTo(finish.position) > 0.1) result.push(curb);
+    if (target.distanceTo(result[result.length - 1] ?? from) > 0.1) {
+      result.push(new THREE.Vector3(target.x, 0, target.z));
+    }
     return result;
   }
 }

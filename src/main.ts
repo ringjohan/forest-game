@@ -13,6 +13,7 @@ import type { CityVenue } from "./city";
 import { FOREST_CITY_EXIT, LANDMARKS, LAKE, SPAWN, WORLD_SIZE } from "./world-types";
 import { CITY_ORIGIN, CITY_ROTATION, FOREST_JOIN, cityToWorld, worldToCity, onAirportApproach } from "./geography";
 import { Aviation, AIRPORT_BOUNDS, FLIGHT_VIEW_DISTANCE, flightFogDensity } from "./aviation";
+import { CrashEffects } from "./crash-effects";
 import { TrafficPolice, SPEED_LIMIT_KMH, JAIL_SECONDS, ESCAPE_SECONDS } from "./police";
 import { Jail } from "./jail";
 import "./style.css";
@@ -278,6 +279,8 @@ async function init(): Promise<void> {
   scene.add(city.scene);
   city.scene.updateMatrixWorld(true);
   const aviation = new Aviation();
+  const crashEffects = new CrashEffects();
+  scene.add(crashEffects.group);
   scene.add(aviation.group);
   const landscape = new THREE.Mesh(
     new THREE.PlaneGeometry(FLIGHT_VIEW_DISTANCE * 2, FLIGHT_VIEW_DISTANCE * 2),
@@ -640,7 +643,7 @@ async function init(): Promise<void> {
     element("day-status").textContent = `${survival.night ? "Natt" : "Dag"} · ${minutes}:${seconds} till ${survival.night ? "gryning" : "natt"}`;
     element<HTMLProgressElement>("health").value = survival.health;
     element("health-label").textContent = `Hälsa ${Math.ceil(survival.health)} / 100`;
-    element("safety-status").textContent = aviation.active ? "Ombord · Trygg flygning" : indoors() ? "Inomhus · Hälsan återhämtas" : inCity ? "Trygg stad · Hälsan återhämtas" : survival.night ? `Natt · ${werewolves.count} varulvar i närheten` : "Dagsljus · Hälsan återhämtas";
+    element("safety-status").textContent = aviation.crashRemaining > 0 ? "Flygkrasch · Återvänder snart till flygplatsen" : aviation.active ? "Ombord · Trygg flygning" : indoors() ? "Inomhus · Hälsan återhämtas" : inCity ? "Trygg stad · Hälsan återhämtas" : survival.night ? `Natt · ${werewolves.count} varulvar i närheten` : "Dagsljus · Hälsan återhämtas";
   }
 
   const mapBase = document.createElement("canvas");
@@ -856,6 +859,7 @@ async function init(): Promise<void> {
     if (sleep) return;
     if (jailed) { toast(`Du blir frigiven om ${Math.ceil(jailRemaining)} sekunder. Öppna paneler pausar tiden.`); return; }
     if (aviation.active) {
+      if (aviation.crashRemaining > 0) { toast("Planet har kraschat. Du återvänder snart till flygplatsen."); return; }
       const exit = aviation.exit(globalBlocked);
       if (!exit) { toast("Landa på banan och bromsa till stillastående innan du kliver ur."); return; }
       player.group.position.copy(inCity ? worldToCity(exit) : exit);
@@ -1068,7 +1072,8 @@ async function init(): Promise<void> {
 
   function updatePlayer(dt: number): void {
     if (aviation.active) {
-      const message = aviation.update(dt, keys, globalHeight, globalFlightBlocked);
+      const message = aviation.update(dt, keys, globalHeight, globalFlightBlocked,
+        impact => crashEffects.impact(impact, scene, [aviation.plane, player.group], globalHeight));
       if (message) toast(message);
       player.group.position.copy(inCity ? worldToCity(aviation.plane.position) : aviation.plane.position);
       updateRegion(aviation.plane.position.z >= FOREST_JOIN);
@@ -1082,7 +1087,9 @@ async function init(): Promise<void> {
       const throttle = Number(keys.has("ArrowUp") || keys.has("KeyW")) - Number(keys.has("ArrowDown") || keys.has("KeyS"));
       const steering = Number(keys.has("ArrowRight") || keys.has("KeyD")) - Number(keys.has("ArrowLeft") || keys.has("KeyA"));
       const previous = city.activeVehicle.group.position.clone();
-      city.drive(dt, throttle, steering, keys.has("Space"));
+      city.drive(dt, throttle, steering, keys.has("Space"), shape => police.checkContact({
+        position: player.group.position, vehicle: city.activeVehicle, available: true,
+      }, shape));
       const offence = police.observeDriving(previous, city.activeVehicle, dt);
       if (offence) toast(offence);
       player.group.position.copy(city.activeVehicle.group.position);
@@ -1110,7 +1117,9 @@ async function init(): Promise<void> {
     const oldX = pos.x;
     const oldZ = pos.z;
     const ground = terrain();
-    const canStep = (x: number, z: number) => !ground.blocked(x, z, PLAYER_RADIUS)
+    const canStep = (x: number, z: number) => !(inCity && !indoors() && police.checkContact({
+      position: new THREE.Vector3(x, pos.y, z), vehicle: null, available: true,
+    })) && !ground.blocked(x, z, PLAYER_RADIUS)
       && (indoors() || (inCity ? !city.vehicleBlocked(x, z, PLAYER_RADIUS) && !city.pedestrianBlocked(x, z, PLAYER_RADIUS)
         : !werewolves.blocked(x, z)))
       && ground.heightAt(x, z) - ground.heightAt(pos.x, pos.z) < 0.7;
@@ -1144,12 +1153,11 @@ async function init(): Promise<void> {
     element("police-hud").hidden = !jailed && !police.wanted;
     const policeTitle = jailed ? `Fängelse · ${Math.ceil(jailRemaining)} s kvar` : `Efterlyst · ${police.reason}`;
     const policeDetail = jailed ? "Frigivning efter en minut · Paneler pausar tiden."
-      : police.captureProgress > 0 ? "Polisen är nära! Du håller på att bli stoppad."
       : police.escapeRemaining < ESCAPE_SECONDS ? `Polisen tappar dig om ${Math.ceil(police.escapeRemaining)} s. Håll avstånd!`
-      : `Polisen jagar dig · Kom undan på säkert avstånd i ${ESCAPE_SECONDS} s.`;
+      : `Polisen jagar dig · Minsta kontakt med en polisbil leder till fängelse. Håll avstånd i ${ESCAPE_SECONDS} s.`;
     if (element("police-title").textContent !== policeTitle) element("police-title").textContent = policeTitle;
     if (element("police-detail").textContent !== policeDetail) element("police-detail").textContent = policeDetail;
-    element("flight-hud").hidden = !aviation.active;
+    element("flight-hud").hidden = !aviation.active || aviation.crashRemaining > 0;
     element("vehicle-hud").hidden = !city.activeVehicle;
     element("travel").hidden = indoors() || aviation.active;
     element("bottom-controls").hidden = jailed || city.activeVehicle !== null || aviation.active;
@@ -1322,6 +1330,7 @@ async function init(): Promise<void> {
     if (!document.hidden) {
       elapsed += dt;
       if (started && !overlay) {
+        crashEffects.update(dt);
         if (sleep) {
           updateSleep(dt);
           updateSurvival(0);

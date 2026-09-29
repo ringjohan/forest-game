@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { circleIntersectsFootprint } from "./collision";
+import type { AircraftImpact } from "./crash-effects";
 
 export const AIRPORT_BOUNDS = { minX: 680, maxX: 860, minZ: 580, maxZ: 940 } as const;
 export const AIRPORT_SPAWN = new THREE.Vector3(781.5, 0, 640);
@@ -69,6 +70,7 @@ export class Aviation {
   cockpit = false;
   speed = 0;
   grounded = true;
+  crashRemaining = 0;
 
   private readonly airport = new THREE.Group();
   private readonly shell = new THREE.Group();
@@ -384,7 +386,7 @@ export class Aviation {
   }
 
   exit(blocked: (x: number, z: number) => boolean): THREE.Vector3 | null {
-    if (!this.active || !this.grounded || this.speed > 0.5) return null;
+    if (!this.active || this.crashRemaining > 0 || !this.grounded || this.speed > 0.5) return null;
     for (const side of [-1, 1]) {
       for (const forward of [0, -2, 2]) {
         const exit = new THREE.Vector3(side * 8.5, 0, forward).applyAxisAngle(UP, this.heading);
@@ -403,6 +405,7 @@ export class Aviation {
   }
 
   toggleView(): void {
+    if (this.crashRemaining > 0) return;
     this.cockpit = !this.cockpit;
     this.shell.visible = !this.active || !this.cockpit;
     this.cameraCut = true;
@@ -413,6 +416,8 @@ export class Aviation {
   }
 
   private reset(reason: string): string {
+    this.crashRemaining = 0;
+    this.plane.visible = true;
     this.plane.position.copy(PARKING);
     this.plane.rotation.set(0, 0, 0);
     this.heading = this.verticalSpeed = this.bank = this.pitch = this.speed = 0;
@@ -426,8 +431,25 @@ export class Aviation {
   update(
     dt: number, keys: ReadonlySet<string>, groundHeight: (x: number, z: number) => number,
     obstacle: (x: number, y: number, z: number, radius: number) => boolean,
+    onImpact?: (impact: AircraftImpact) => void,
   ): string | null {
     if (!this.active || !Number.isFinite(dt) || dt <= 0) return null;
+    if (this.crashRemaining > 0) {
+      this.crashRemaining = Math.max(0, this.crashRemaining - Math.min(dt, 0.5));
+      return this.crashRemaining <= 1e-8 ? this.reset("Efter kraschen hämtas du tillbaka.") : null;
+    }
+    const crash = (reason: string, ground: boolean, contact = this.position): string => {
+      this.crashRemaining = 4;
+      this.speed = this.verticalSpeed = 0;
+      this.grounded = false;
+      this.cockpit = false;
+      this.shell.visible = true;
+      // Keep the camera on the last clear pose, rather than inside the struck building.
+      this.plane.visible = false;
+      this.cameraCut = true;
+      onImpact?.({ position: this.position.clone(), contact: contact.clone(), ground });
+      return `Krasch! ${reason} Du återvänder till flygplatsen om fyra sekunder.`;
+    };
     const pressed = (...codes: string[]): boolean => codes.some(code => keys.has(code));
     const throttle = pressed("KeyW", "w", "W");
     const brake = pressed("KeyS", "s", "S");
@@ -494,14 +516,14 @@ export class Aviation {
           this.speed = 0;
           warn("Stanna på flygplatsen vid taxning. Starta längs banan med W.");
         } else if (Math.abs(floor - surface) > 0.3) {
-          return this.reset("Oj, ojämn mark framför planet.");
+          return crash("Ojämn mark framför planet.", true);
         } else this.position.y = floor + GEAR_HEIGHT;
       } else if (this.position.y <= floor + GEAR_HEIGHT) {
         if (!this.onRunway(this.position.x, this.position.z)) {
-          return this.reset("Markkontakt utanför landningsbanan. Landa på den markerade banan nästa gång.");
+          return crash("Markkontakt utanför landningsbanan.", true);
         }
         if (this.speed > 40 || this.verticalSpeed < -10 || Math.abs(Math.cos(this.heading)) < 0.88) {
-          return this.reset("Inflygningen var för snabb eller sned. Rikta planet längs banan och bromsa med S.");
+          return crash("Inflygningen var för snabb eller sned.", true);
         }
         this.position.y = floor + GEAR_HEIGHT;
         this.grounded = true;
@@ -519,11 +541,11 @@ export class Aviation {
       for (const sample of this.samples) {
         this.probe.copy(sample).applyQuaternion(this.plane.quaternion).add(this.position);
         if (this.probe.y - 0.28 < groundHeight(this.probe.x, this.probe.z)) {
-          return this.reset("Vingen kom för nära marken.");
+          return crash("Vingen träffade marken.", true, this.probe);
         }
         if (this.flightBlocked(this.probe.x, this.probe.y, this.probe.z, 0.78)
           || obstacle(this.probe.x, this.probe.y, this.probe.z, 0.78)) {
-          return this.reset("Ett hinder låg i flygvägen.");
+          return crash("Planet träffade ett föremål.", false, this.probe);
         }
       }
       this.plane.position.copy(this.position);
