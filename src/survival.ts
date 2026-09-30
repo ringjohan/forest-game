@@ -1,6 +1,9 @@
 import * as THREE from "three";
 import { World } from "./world";
 import { PLAYER_RADIUS, SWORD_COOLDOWN_SECONDS, WEREWOLF_RADIUS } from "./combat";
+import { Character } from "./character";
+import type { ArrowTarget } from "./archery";
+import { TREEHOUSE } from "./treehouse";
 
 export const DAY_SECONDS = 180;
 export const NIGHT_SECONDS = 90;
@@ -58,6 +61,7 @@ type Werewolf = {
   legs: THREE.Mesh[];
   health: number;
   stun: number;
+  thief?: Character;
 };
 
 type Burst = {
@@ -70,8 +74,10 @@ type Burst = {
 };
 
 export class Werewolves {
+  banditsEnabled = false;
   private readonly wolves: Werewolf[] = [];
   private readonly bursts: Burst[] = [];
+  private readonly thieves: Character[] = [];
   private spawnTimer = 0;
   private readonly fur = new THREE.MeshStandardMaterial({ color: 0x454957, roughness: 1 });
   private readonly muzzle = new THREE.MeshStandardMaterial({ color: 0x777884, roughness: 1 });
@@ -84,6 +90,19 @@ export class Werewolves {
   constructor(private readonly scene: THREE.Scene, private readonly world: World) {}
 
   get count(): number { return this.wolves.length; }
+
+  arrowTargets(): ArrowTarget[] {
+    return this.wolves.map(wolf => ({
+      center: wolf.group.position.clone().add(new THREE.Vector3(0, wolf.thief ? 1.05 : 1.5, 0)),
+      radius: wolf.thief ? 0.85 : 1.1,
+      hit: () => {
+        const index = this.wolves.indexOf(wolf);
+        if (index < 0) return;
+        this.wolves.splice(index, 1);
+        this.burst(wolf.group.position, wolf.group);
+      },
+    }));
+  }
 
   blocked(x: number, z: number, radius = PLAYER_RADIUS, except?: THREE.Group): boolean {
     return this.wolves.some(wolf => wolf.group !== except
@@ -146,13 +165,30 @@ export class Werewolves {
     this.bursts.length = 0;
   }
 
-  private spawn(player: THREE.Vector3): void {
+  private spawn(player: THREE.Vector3, thief = false): void {
     for (let attempt = 0; attempt < 48; attempt++) {
       const angle = Math.random() * Math.PI * 2;
       const distance = 19 + Math.random() * 9;
       const x = player.x + Math.sin(angle) * distance;
       const z = player.z + Math.cos(angle) * distance;
       if (this.world.blocked(x, z, WEREWOLF_RADIUS) || this.blocked(x, z, WEREWOLF_RADIUS)) continue;
+      if (thief) {
+        let character = this.thieves.find(candidate => !this.wolves.some(wolf => wolf.group === candidate.group)
+          && !this.bursts.some(burst => burst.vanishing === candidate.group));
+        if (!character) {
+          character = new Character(0x694b75, false);
+          const mask = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.1, 0.08), this.fur);
+          mask.position.set(0, 1.9, 0.17);
+          character.group.add(mask);
+          this.thieves.push(character);
+        }
+        character.group.scale.setScalar(1);
+        character.group.rotation.set(0, 0, 0);
+        character.group.position.set(x, this.world.heightAt(x, z), z);
+        this.scene.add(character.group);
+        this.wolves.push({ group: character.group, legs: [], health: 2, stun: 0, thief: character });
+        return;
+      }
       const group = new THREE.Group();
       const mesh = (geometry: THREE.BufferGeometry, material: THREE.Material, x: number, y: number, z: number, sx = 1, sy = 1, sz = 1) => {
         const part = new THREE.Mesh(geometry, material);
@@ -184,12 +220,16 @@ export class Werewolves {
   update(dt: number, elapsed: number, player: THREE.Vector3, sheltered: boolean, survival: Survival): boolean {
     this.updateEffects(dt);
     if (!survival.night) {
-      if (this.wolves.length) this.clear();
-      return false;
+      for (let i = this.wolves.length - 1; i >= 0; i--) {
+        if (this.wolves[i].thief) continue;
+        this.scene.remove(this.wolves[i].group);
+        this.wolves.splice(i, 1);
+      }
     }
     this.spawnTimer -= dt;
-    if (!sheltered && this.spawnTimer <= 0 && this.wolves.length < 4) {
-      this.spawn(player);
+    const banditsNearby = this.banditsEnabled && Math.hypot(player.x - TREEHOUSE.x, player.z - TREEHOUSE.z) < 80;
+    if (!sheltered && (survival.night || banditsNearby) && this.spawnTimer <= 0 && this.wolves.length < 4) {
+      this.spawn(player, !survival.night || (banditsNearby && this.wolves.length % 2 === 1));
       this.spawnTimer = 6;
     }
     let hit = false;
@@ -205,7 +245,10 @@ export class Werewolves {
       wolf.stun = Math.max(0, wolf.stun - dt);
       wolf.group.rotation.z = Math.sin(wolf.stun * 25) * wolf.stun * 0.18;
       if (sheltered || wolf.stun > 0) continue;
-      const angle = Math.atan2(player.x - pos.x, player.z - pos.z);
+      let angle = Math.atan2(player.x - pos.x, player.z - pos.z);
+      if (player.y - pos.y > 4) {
+        angle += distance < 16 ? Math.PI : distance < 24 ? Math.PI / 2 : 0;
+      }
       wolf.group.rotation.y = angle;
       if (distance > 1.35) {
         // Try angled routes as well as sliding so a tree does not permanently trap a wolf.
@@ -222,8 +265,11 @@ export class Werewolves {
       } else if (player.y - pos.y < 1.2) {
         hit = survival.hurt() || hit;
       }
-      wolf.legs[0].rotation.x = Math.sin(elapsed * 10 + i) * 0.6;
-      wolf.legs[1].rotation.x = -wolf.legs[0].rotation.x;
+      if (wolf.thief) wolf.thief.update(dt, distance > 1.35 ? 4.1 : 0, elapsed);
+      else {
+        wolf.legs[0].rotation.x = Math.sin(elapsed * 10 + i) * 0.6;
+        wolf.legs[1].rotation.x = -wolf.legs[0].rotation.x;
+      }
     }
     return hit;
   }

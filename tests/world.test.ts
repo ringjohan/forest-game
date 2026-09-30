@@ -10,6 +10,10 @@ import { TrafficPolice, SPEED_LIMIT_KMH, JAIL_SECONDS, ESCAPE_SECONDS } from "..
 import { Jail } from "../src/jail";
 import { CrashEffects } from "../src/crash-effects";
 import type { AircraftImpact } from "../src/crash-effects";
+import { TREEHOUSE } from "../src/treehouse";
+import { Archery, ARROW_COOLDOWN, ARROW_SPEED } from "../src/archery";
+import { Survival, Werewolves, DAY_SECONDS } from "../src/survival";
+import { PLAYER_RADIUS, segmentSphereHit } from "../src/combat";
 
 const results = document.querySelector<HTMLPreElement>("#results")!;
 const lines: string[] = [];
@@ -36,6 +40,156 @@ async function run(): Promise<void> {
   const city = new City(await loadCityAssets());
   const aviation = new Aviation();
   const traffic = new TrafficPolice(city);
+
+  test("Treehouse approach, ladders, treasure, doorway and roof form a playable round trip", () => {
+    const house = world.treehouse;
+    const pos = new THREE.Vector3(0, 0, 67);
+    function finishClimb(): void {
+      for (let step = 0; step < 1200 && house.climbing; step++) {
+        house.update(1 / 60, pos);
+        assert(!house.solidAt(pos.x, pos.y + 0.1, pos.z, 0.04), "Climbing passes through a plank instead of a hatch");
+      }
+      assert(!house.climbing, "Climbing never completes");
+    }
+    for (let i = 0; i <= 100; i++) {
+      pos.lerpVectors(new THREE.Vector3(0, 0, 67), house.entrance, i / 100);
+      assert(!world.blocked(pos.x, pos.z, PLAYER_RADIUS), "Treehouse approach is blocked");
+    }
+    pos.copy(house.entrance);
+    assert(house.interaction(pos) === "ascend", "Ground ladder prompt missing");
+    assert(!house.interact("chest", pos) && !house.opened, "Treasure can be taken from the ground");
+    assert(house.interact("ascend", pos), "Cannot start climbing");
+    house.update(1, pos);
+    assert(house.climbing && pos.y > house.entrance.y && pos.y < house.floor, "Climbing teleports");
+    const paused = pos.clone();
+    house.update(0, pos);
+    assert(pos.equals(paused), "Paused climbing still moves");
+    finishClimb();
+    assert(house.elevated && pos.y === house.floor, "Did not land on the deck");
+    assert(!house.blocked(pos.x, pos.z, PLAYER_RADIUS), "Deck landing is blocked");
+    function walk(x: number, z: number): void {
+      const from = pos.clone();
+      const to = new THREE.Vector3(TREEHOUSE.x + x, house.heightAt(), TREEHOUSE.z + z);
+      for (let i = 1; i <= 60; i++) {
+        pos.lerpVectors(from, to, i / 60);
+        assert(!house.blocked(pos.x, pos.z, PLAYER_RADIUS), `Blocked on deck/roof at ${pos.x}, ${pos.z}`);
+      }
+    }
+    walk(-3, 3.2);
+    walk(1, 3.2);
+    walk(1, -0.5);
+    assert(house.interaction(pos) === "chest", "Cannot reach treasure through doorway");
+    assert(house.interact("chest", pos) && house.opened, "Chest did not unlock equipment");
+    assert(!house.interact("chest", pos), "Treasure can be claimed twice");
+    walk(1, 3.2);
+    walk(3, 3.3);
+    assert(house.interact("roof", pos), "Roof ladder inaccessible");
+    finishClimb();
+    assert(pos.y === house.roof && !house.blocked(pos.x, pos.z, PLAYER_RADIUS), "Roof landing is blocked");
+    walk(0, 2.1);
+    walk(0, 0);
+    assert(house.blocked(TREEHOUSE.x + 4, TREEHOUSE.z, PLAYER_RADIUS), "Can walk off the roof");
+    assert(house.solidAt(TREEHOUSE.x + 0.2, house.roof - 0.1, TREEHOUSE.z), "Roof plank does not stop arrows/aircraft");
+    walk(0, 2.1);
+    walk(3, 2.1);
+    assert(house.interact("cabin", pos), "Cannot descend from roof");
+    finishClimb();
+    walk(1, 3.2);
+    walk(-3, 3.2);
+    walk(-3, 2.45);
+    assert(house.interact("descend", pos), "Cannot descend to forest");
+    finishClimb();
+    assert(pos.equals(house.entrance) && !house.elevated, "Did not return to ground");
+    assert(house.opened, "Treasure state was lost after leaving");
+  });
+
+  test("Arrow sweeps hit once at different frame rates and have unlimited ammunition", () => {
+    for (const dt of [1 / 144, 1 / 30, 0.1]) {
+      const scene = new THREE.Scene();
+      const bow = new Archery(scene);
+      let hits = 0;
+      const center = new THREE.Vector3(0, 0, -8);
+      for (let shot = 0; shot < 80; shot++) {
+        assert(bow.shoot(new THREE.Vector3(), new THREE.Vector3(0, 0, -1)), "Ammunition ran out");
+        assert(!bow.shoot(new THREE.Vector3(), new THREE.Vector3(0, 0, -1)), "Shot cooldown missing");
+        assert(scene.children.length === 1, "Arrow is not visible in the scene");
+        for (let t = 0; t < ARROW_COOLDOWN + dt; t += dt) {
+          bow.update(dt, () => [{ center, radius: 0.4, hit: () => { hits++; } }], () => false);
+        }
+        assert(hits === shot + 1 && bow.count === 0, "Arrow missed/tunnelled or hit repeatedly");
+      }
+      assert(scene.children.length === 0, "Expired arrows leak scene objects");
+    }
+  });
+
+  test("Arrows stop at obstacles before enemies and choose the nearest target", () => {
+    const bow = new Archery(new THREE.Scene());
+    let near = 0;
+    let far = 0;
+    const targets = () => [
+      { center: new THREE.Vector3(0, 0, -9), radius: 0.5, hit: () => { far++; } },
+      { center: new THREE.Vector3(0, 0, -6), radius: 0.5, hit: () => { near++; } },
+    ];
+    bow.shoot(new THREE.Vector3(), new THREE.Vector3(0, 0, -1));
+    bow.update(0.3, targets, p => p.z < -3);
+    assert(near === 0 && far === 0 && bow.count === 0, "Arrow penetrated a wall");
+    bow.clear();
+    bow.shoot(new THREE.Vector3(), new THREE.Vector3(0, 0, -1));
+    bow.update(0, targets, () => false);
+    assert(Number(bow.count) === 1 && near === 0, "Paused projectile advanced");
+    bow.update(0.3, targets, () => false);
+    assert(Number(near) === 1 && far === 0 && bow.count === 0, "Wrong target or piercing arrow");
+    bow.clear();
+    bow.shoot(new THREE.Vector3(), new THREE.Vector3(1, 0, 0));
+    bow.update(5, () => [], () => false);
+    assert(bow.count === 0, "Missed arrow never expires");
+    assert(ARROW_SPEED > 0 && segmentSphereHit(new THREE.Vector3(), new THREE.Vector3(0, 0, -10),
+      new THREE.Vector3(0, 3, -5), 1) === null, "Vertical aim ignored");
+  });
+
+  test("Forest arrows hit trunks, not the empty air below their canopies", () => {
+    const trunk = new THREE.Vector3(-10, world.heightAt(-10, 31) + 2, 31);
+    assert(world.projectileBlocked(trunk), "Arrow passes through a visible foreground trunk");
+    assert(!world.projectileBlocked(trunk.clone().add(new THREE.Vector3(2, 0, 0))), "Canopy blocks empty space beside the trunk");
+    assert(world.projectileBlocked(new THREE.Vector3(0, world.heightAt(0, 30) - 0.1, 30)), "Arrow passes underground");
+  });
+
+  test("A visible arrow can fly from the roof into the forest clearing", () => {
+    const house = world.treehouse;
+    const origin = new THREE.Vector3(TREEHOUSE.x + 3.45, house.roof + 1.7, TREEHOUSE.z + 1);
+    const target = new THREE.Vector3(TREEHOUSE.x + 12, world.heightAt(TREEHOUSE.x + 12, TREEHOUSE.z + 1) + 1.2, TREEHOUSE.z + 1);
+    const bow = new Archery(new THREE.Scene());
+    let hits = 0;
+    bow.shoot(origin, target.clone().sub(origin));
+    for (let i = 0; i < 100; i++) bow.update(0.02, () => [{ center: target, radius: 0.8, hit: () => { hits++; } }],
+      point => world.projectileBlocked(point));
+    assert(hits === 1, "Cannot shoot from the actual roof past its railing to ground level");
+  });
+
+  test("Thieves and monsters are arrow targets, vanish with effects, and cannot hit the roof", () => {
+    const scene = new THREE.Scene();
+    const enemies = new Werewolves(scene, world);
+    const survival = new Survival();
+    const pos = new THREE.Vector3(TREEHOUSE.x, world.treehouse.roof, TREEHOUSE.z);
+    enemies.banditsEnabled = true;
+    enemies.update(0.04, 0, pos, false, survival);
+    assert(enemies.count === 1, "Daytime thief missing after treasure");
+    for (let i = 0; i < 600; i++) enemies.update(0.04, i * 0.04, pos, false, survival);
+    assert(survival.health === 100, "Ground enemy damaged the player on the roof");
+    assert(enemies.arrowTargets().some(t => Math.hypot(t.center.x - pos.x, t.center.z - pos.z) > 10), "Enemies hide directly below the roof");
+    for (const target of enemies.arrowTargets()) target.hit();
+    assert(Number(enemies.count) === 0 && scene.children.length > 0, "Hit did not start vanishing effect");
+    enemies.update(1, 25, pos, true, survival);
+    assert(scene.children.length === 0, "Vanished enemies/effects remain in scene");
+    enemies.clear();
+    survival.time = DAY_SECONDS;
+    enemies.update(0.04, 26, pos, false, survival);
+    assert(Number(enemies.count) === 1, "Night monster missing");
+    enemies.arrowTargets()[0].hit();
+    enemies.update(1, 27, pos, true, survival);
+    assert(Number(enemies.count) === 0 && scene.children.length === 0, "Monster did not disappear");
+    enemies.clear();
+  });
 
   function withDriver(runTest: (driver: Vehicle) => void): void {
     const driver = city.vehicles.find(vehicle => vehicle.kind === "bmw");

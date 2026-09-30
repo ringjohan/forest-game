@@ -56,7 +56,12 @@ npx tsc --noEmit -p tests/tsconfig.json
 | E | Prata med en bybo / gå in eller ut vid husets dörr / sova vid sängen / stäng dialogen |
 | B | Öppna / stäng ryggsäcken och se ditt svärd |
 | 1 | Utrusta / stoppa undan svärdet |
-| F | Hugg med utrustat svärd i den riktning du är vänd |
+| 2 / 3 | Välj pilbåge / fiskespö efter att du hittat skattkistan |
+| Q | Växla pilbågens sikte |
+| Dra höger musknapp (med sikte) | Vrid siktet åt alla håll |
+| Scrollhjul (med sikte) | Zooma siktet |
+| Vänsterklick / F (med pilbåge) | Skjut en synlig pil; obegränsat med pilar |
+| F (med svärd) | Hugg i den riktning du är vänd |
 | M | Öppna / stäng kartan |
 | C | Valfri snabbresa mellan skogen och staden |
 | V (i flygplanet) | Växla mellan cockpit och följkamera bakom planet |
@@ -68,6 +73,33 @@ npx tsc --noEmit -p tests/tsconfig.json
 Ljud aktiveras med högtalarknappen. Besök alla fyra byar för att slutföra
 den första vandringen; världen förblir öppen efteråt. Framsteg gäller den
 aktuella spelomgången och återställs när sidan laddas om.
+
+## Äppelkojan
+
+Sydost om startplatsen står ett högt äppelträd, markerat med en gul ruta och
+**Äppelkojan** på kartan. Följ stigen söderut och ta av österut vid förgreningen.
+Kojan är byggd av separata plankor cirka 19 meter upp i trädet.
+
+- Tryck **E** vid plankstegen på stammen för att klättra upp automatiskt.
+  Paneler pausar klättringen. E vid samma stege uppe på verandan tar dig ner igen.
+- Gå runt hörnet till öppningen på kojans framsida. **E** vid skattkistan
+  öppnar locket och ger en pilbåge, ett extra svärd och ett fiskespö.
+  Ditt ursprungliga vandrarsvärd finns kvar; du kan alltid försvara dig med det.
+- En andra plankstege på verandans högra sida leder till det gångbara taket.
+  **E** vid den klättrar upp eller ner. Räcken hindrar dig från att gå över kanten.
+- **2** utrustar pilbågen och visar ett förstapersonssikte. Dra med höger musknapp
+  för att sikta, scrolla för att zooma och skjut med vänsterklick eller **F**.
+  **Q** växlar tillbaka till följkameran. Gå nära takräcket för fri sikt ner mot
+  skogen. Pilar färdas genom världen och stoppas av terräng, träd och byggnader.
+- Efter att skatten öppnats finns maskerade tjuvar i skogen kring kojan.
+  På natten kommer även varulvar. En pilträff får fienden att snurra, krympa
+  och försvinna i ett färgat partikelmoln, utan blod. Fienderna når inte taket.
+- **3** låter dig hålla fiskespöet. Själva fiskandet är inte implementerat.
+
+Pilarna tar aldrig slut, men det finns en kort paus mellan skotten. Utrustning
+och den öppnade kistan finns kvar under spelomgången, även efter snabbresa eller
+räddning. Klättra ner till marken innan du snabbreser. Siktesläge och strider
+är avstängda i staden, inomhus och under flygning.
 
 ## Norrhamn City
 

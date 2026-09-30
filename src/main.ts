@@ -16,6 +16,9 @@ import { Aviation, AIRPORT_BOUNDS, FLIGHT_VIEW_DISTANCE, flightFogDensity } from
 import { CrashEffects } from "./crash-effects";
 import { TrafficPolice, SPEED_LIMIT_KMH, JAIL_SECONDS, ESCAPE_SECONDS } from "./police";
 import { Jail } from "./jail";
+import { Archery, makeBow } from "./archery";
+import { TREEHOUSE } from "./treehouse";
+import type { TreehouseAction } from "./treehouse";
 import "./style.css";
 
 const icons = {
@@ -73,6 +76,7 @@ element("app").innerHTML = `
     <div class="minimap-wrap"><button id="open-map" class="minimap-button" title="Öppna kartan (M)" aria-label="Öppna kartan"><canvas id="minimap" width="300" height="300"></canvas><span class="map-n">N</span></button><div class="map-hint"><kbd>M</kbd> Visa kartan</div></div>
     <div class="survival-hud"><div><span id="health-label">Hälsa 100 / 100</span><progress id="health" max="100" value="100" aria-label="Hälsa"></progress></div><p id="safety-status">Utforska i dagsljuset.</p><button id="open-inventory"><kbd>B</kbd> Ryggsäck</button><span id="weapon-status">Svärdet ligger i ryggsäcken</span></div>
     <div id="bottom-controls" class="bottom-controls"><span><kbd>Space</kbd> Hoppa</span><span><kbd>Shift</kbd> Spring</span><span><kbd>F</kbd> Svärdshugg</span></div>
+    <div id="bow-sight" class="bow-sight" hidden><div class="reticle"></div><p id="bow-hint">Vänsterklick / F · Skjut<br>Dra höger musknapp · Sikta · Scrolla · Zooma<br>Q · Lämna siktet · Obegränsat med pilar</p><strong id="arrow-feedback" role="status"></strong></div>
     <div id="interaction" class="interaction" hidden><kbd>E</kbd><span id="interaction-text"></span></div>
     <div id="discovery" class="discovery" role="status"><div class="small-label">Ny plats upptäckt</div><h2 id="discovery-name"></h2><div class="discovery-line"></div><p id="discovery-description"></p></div>
   </div>
@@ -84,6 +88,7 @@ element("app").innerHTML = `
       <p>I staden gäller ${SPEED_LIMIT_KMH} km/h. Fortkörning och att köra över stopplinjen vid rött startar en polisjakt. Patrullerna följer gatorna och kan fånga dig när de kommer nära och du står stilla eller kör långsamt. Håll avstånd från alla patruller i ${ESCAPE_SECONDS} sekunder för att komma undan. Om du blir fångad hamnar du i häktet i ${JAIL_SECONDS} sekunder och släpps sedan automatiskt ut vid terminalens polisstation. Snabbresa är avstängd under jakten och i häktet; öppna paneler pausar även jakten och fängelsetiden. Polisbilar i tjänst går inte att låna.</p>
       <p>Flygplatsen ligger på stadens östra sida och är markerad på världskartan (M). Gå till planet och tryck E. W ger gas, S bromsar, vänster / höger pil svänger. Dra upp nosen med pil ned (↓) för att stiga, och sänk nosen med pil upp (↑) för att sjunka. Accelerera längs banan för att lyfta. Du kan flyga upp till 10 000 meters höjd över både staden och skogen. V växlar cockpit / följkamera. Återvänd längs banan och håll S + ↑ för att landa. E låter dig kliva ur först när planet står stilla på marken. Paneler och paus stoppar även flygningen.</p>
       <p>Utforska skogens fyra byar. Dagen varar i tre minuter och natten i en och en halv. När varulvarna kommer kan du springa undan, försvara dig eller gå in i ett hus. Inomhus är du trygg och återhämtar hälsa. Tryck E vid sängen för att lägga dig och sova till nästa morgon. Efter en kort sovanimation kliver du upp automatiskt med full hälsa. Spelet pausas när en panel är öppen.</p>
+      <p>Följ stigen söderut från starten och sväng vänster mot äppelträdet (markerat på kartan). E vid plankstegen klättrar upp till trädkojan. Öppna skattkistan med E: där finns ett svärd, en pilbåge och ett fiskespö. Stegen på verandans högra sida leder till taket. Välj pilbågen med 2, sikta genom att dra höger musknapp, zooma med scrollhjulet och skjut med vänsterklick eller F. Q växlar siktet. Pilarna är obegränsade. Tjuvar stryker runt kojan efter att skatten hittats; varulvar kommer på natten. En pilträff får dem att försvinna i ett magiskt skimmer. 3 håller fiskespöet; fiske är ännu inte spelbart.</p>
       <div class="control-list">
         <div class="control-row"><span>Gå i kamerans riktning</span><span class="keys"><kbd>←</kbd><kbd>↑</kbd><kbd>↓</kbd><kbd>→</kbd></span></div>
         <div class="control-row"><span>Spring</span><kbd>Shift</kbd></div>
@@ -116,8 +121,10 @@ element("app").innerHTML = `
     <div class="panel">
       <button id="close-inventory" class="icon-button close" aria-label="Stäng ryggsäcken">${icon("close")}</button>
       <div class="small-label">Din utrustning · Spelet är pausat</div><h2 id="inventory-title">Ryggsäcken</h2>
-      <div class="inventory-item"><svg viewBox="0 0 64 64" aria-hidden="true"><path d="M47 5 56 8 32 42 24 35Z" fill="#c8d8dc"/><path d="m18 32 19 13M25 41 15 55" stroke="#d4c49a" stroke-width="6"/></svg><div><h3>Vandrarsvärd <span>× 1</span></h3><p>Två träffar driver bort en varulv. Vänd dig mot den och tryck F.</p></div></div>
+      <div class="inventory-item"><svg viewBox="0 0 64 64" aria-hidden="true"><path d="M47 5 56 8 32 42 24 35Z" fill="#c8d8dc"/><path d="m18 32 19 13M25 41 15 55" stroke="#d4c49a" stroke-width="6"/></svg><div><h3>Vandrarsvärd <span id="sword-count">× 1</span></h3><p>Två träffar driver bort en varulv. Vänd dig mot den och tryck F.</p></div></div>
       <button id="equip-sword" class="primary" aria-pressed="false">Utrusta svärdet</button>
+      <div class="inventory-item"><div><h3>Skatten i äppelträdet</h3><p id="treasure-status">Hitta plankstegen vid det höga äppelträdet sydost om starten. Kistan innehåller ett extra svärd, en pilbåge och ett fiskespö.</p></div></div>
+      <div class="equipment-actions"><button id="equip-bow" class="primary" disabled aria-pressed="false">2 · Pilbåge</button><button id="equip-rod" class="primary" disabled aria-pressed="false">3 · Fiskespö</button></div>
       <p>Snabbval: <kbd>1</kbd> utrustar eller stoppar undan svärdet. Hälsan återhämtas i dagsljus och inomhus.</p>
     </div>
   </section>
@@ -316,6 +323,24 @@ async function init(): Promise<void> {
   const venueInterior = new VenueInterior(cityAssets.furniture, city.scene.environment);
   const survival = new Survival();
   const werewolves = new Werewolves(scene, world);
+  const treehouse = world.treehouse;
+  const archery = new Archery(scene);
+  let tool: "bow" | "rod" | null = null;
+  let aiming = false;
+  let aimZoom = 42;
+  let arrowFeedback = 0;
+  const viewBow = makeBow();
+  viewBow.position.set(0.34, -0.3, -0.85);
+  viewBow.rotation.y = Math.PI;
+  viewBow.scale.setScalar(0.65);
+  camera.add(viewBow);
+  scene.add(camera);
+  viewBow.visible = false;
+  const treehouseLabels: Record<TreehouseAction, string> = {
+    ascend: "Klättra upp till trädkojan", descend: "Klättra ner till skogen",
+    roof: "Klättra upp på taket", cabin: "Klättra ner till kojan",
+    chest: "Öppna skattkistan · Pilbåge, svärd och fiskespö",
+  };
   let currentHouse: House | null = null;
   let currentVenue: CityVenue | null = null;
   let outsideVenueHeading = 0;
@@ -400,7 +425,8 @@ async function init(): Promise<void> {
       return globalBlocked(p.x, p.z, radius);
     },
   };
-  const terrain = () => jailed ? jail : currentVenue ? venueInterior : currentHouse ? interior : outdoorTerrain;
+  const terrain = () => jailed ? jail : currentVenue ? venueInterior : currentHouse ? interior
+    : !inCity && treehouse.elevated ? treehouse : outdoorTerrain;
   const outsideScene = () => scene;
   const mapPosition = () => indoors() ? outsidePosition : player.group.position;
   const daySky = new THREE.Color(0x6b99b3);
@@ -412,6 +438,10 @@ async function init(): Promise<void> {
 
   function equipSword(): void {
     if (inCity || aviation.active) { toast("Svärdet vilar i staden och under flygningen."); return; }
+    if (treehouse.climbing) { toast("Klättra färdigt innan du byter utrustning."); return; }
+    tool = null;
+    aiming = false;
+    player.equipTool(null);
     survival.equipped = !survival.equipped;
     player.equipSword(survival.equipped);
     element("equip-sword").textContent = survival.equipped ? "Stoppa undan svärdet" : "Utrusta svärdet";
@@ -419,10 +449,41 @@ async function init(): Promise<void> {
     element("weapon-status").textContent = survival.equipped ? "Svärd utrustat · F för att hugga" : "Svärdet ligger i ryggsäcken";
   }
   element("equip-sword").addEventListener("click", equipSword);
+  function equipTool(next: "bow" | "rod"): void {
+    if (!treehouse.opened) { toast("Öppna skattkistan i trädkojan först. Äppelträdet är markerat på kartan."); return; }
+    if (inCity || indoors() || aviation.active || treehouse.climbing) { toast("Använd utrustningen utomhus i skogen, när du klättrat färdigt."); return; }
+    tool = tool === next ? null : next;
+    survival.equipped = false;
+    player.equipSword(false);
+    player.equipTool(tool);
+    aiming = tool === "bow";
+    if (aiming) pitch = 0.05;
+    element("equip-sword").textContent = "Utrusta svärdet";
+    element("equip-sword").setAttribute("aria-pressed", "false");
+    element("weapon-status").textContent = tool === "bow" ? "Pilbåge · Q sikte · F skjut · Obegränsade pilar"
+      : tool === "rod" ? "Fiskespö utrustat · Fiske kommer senare" : "Utrustningen ligger i ryggsäcken";
+  }
+  element("equip-bow").addEventListener("click", () => equipTool("bow"));
+  element("equip-rod").addEventListener("click", () => equipTool("rod"));
+  function shoot(): void {
+    if (!started || overlay || tool !== "bow" || inCity || indoors() || aviation.active || treehouse.climbing) return;
+    aiming = true;
+    updateCamera(0);
+    const direction = camera.getWorldDirection(new THREE.Vector3());
+    if (archery.shoot(camera.position.clone().addScaledVector(direction, 0.3), direction)) {
+      arrowFeedback = 0.45;
+      element("arrow-feedback").textContent = "Pilen flyger!";
+      viewBow.rotation.z = -0.18;
+    }
+  }
   const openInventory = () => { if (started) showOverlay(overlay === "inventory" ? null : "inventory"); };
   element("open-inventory").addEventListener("click", openInventory);
 
   function resetMovement(): void {
+    aiming = false;
+    tool = null;
+    player.equipTool(null);
+    archery.clear();
     velocity.set(0, 0, 0);
     verticalVelocity = 0;
     grounded = true;
@@ -492,6 +553,10 @@ async function init(): Promise<void> {
 
   function updateRegion(next: boolean): void {
     if (next === inCity) return;
+    aiming = false;
+    tool = null;
+    player.equipTool(null);
+    archery.clear();
     const position = globalPosition();
     const rotation = next ? -CITY_ROTATION : CITY_ROTATION;
     inCity = next;
@@ -516,6 +581,7 @@ async function init(): Promise<void> {
 
   function travel(): void {
     if (!started || overlay) return;
+    if (treehouse.elevated || treehouse.climbing) { toast("Klättra ner från äppelträdet innan du snabbreser."); return; }
     if (jailed) { toast("Du kan resa igen när fängelsetiden är slut."); return; }
     if (police.wanted) { toast("Snabbresa är avstängd under polisjakten. Kom undan polisen först."); return; }
     if (indoors() || sleep) { toast("Gå ut ur byggnaden innan du reser."); return; }
@@ -615,8 +681,9 @@ async function init(): Promise<void> {
       toast(survival.night ? aviation.active ? "Nattflygning · Du är trygg ombord. Följ banljusen tillbaka till flygplatsen." : inCity ? "Natt över Norrhamn. Fönstren lyser och staden är trygg." : "Natten är här! Sök skydd i ett hus eller utrusta svärdet med 1." : "Solen går upp. Varulvarna drar sig tillbaka.");
     }
     const hit = !inCity && !aviation.active && werewolves.update(dt, elapsed, mapPosition(), currentHouse !== null, survival);
-    if (hit) toast("Varulven träffade dig! Spring till ett hus eller försvara dig med F.");
+    if (hit) toast("En fiende träffade dig! Sök skydd eller försvara dig med F.");
     if (survival.health <= 0) {
+      treehouse.level = "ground";
       werewolves.clear();
       survival.recover();
       const refuge = world.houses.reduce<House | undefined>((nearest, house) =>
@@ -643,7 +710,7 @@ async function init(): Promise<void> {
     element("day-status").textContent = `${survival.night ? "Natt" : "Dag"} · ${minutes}:${seconds} till ${survival.night ? "gryning" : "natt"}`;
     element<HTMLProgressElement>("health").value = survival.health;
     element("health-label").textContent = `Hälsa ${Math.ceil(survival.health)} / 100`;
-    element("safety-status").textContent = aviation.crashRemaining > 0 ? "Flygkrasch · Återvänder snart till flygplatsen" : aviation.active ? "Ombord · Trygg flygning" : indoors() ? "Inomhus · Hälsan återhämtas" : inCity ? "Trygg stad · Hälsan återhämtas" : survival.night ? `Natt · ${werewolves.count} varulvar i närheten` : "Dagsljus · Hälsan återhämtas";
+    element("safety-status").textContent = aviation.crashRemaining > 0 ? "Flygkrasch · Återvänder snart till flygplatsen" : aviation.active ? "Ombord · Trygg flygning" : indoors() ? "Inomhus · Hälsan återhämtas" : inCity ? "Trygg stad · Hälsan återhämtas" : treehouse.elevated ? "Högt i äppelträdet · Fienderna når inte hit" : werewolves.count ? `${werewolves.count} fiender i närheten` : survival.night ? "Natt · Se upp för varulvar" : "Dagsljus · Hälsan återhämtas";
   }
 
   const mapBase = document.createElement("canvas");
@@ -707,6 +774,13 @@ async function init(): Promise<void> {
     ctx.translate(width / 2 - (large ? 330 : position.x) * scale, height / 2 - (large ? 370 : position.z) * scale);
     ctx.scale(scale, scale);
     ctx.drawImage(mapBase, -210, -210, 420, 420);
+    ctx.fillStyle = "#ffcb6b";
+    ctx.fillRect(TREEHOUSE.x - 4 / scale, TREEHOUSE.z - 4 / scale, 8 / scale, 8 / scale);
+    if (large) {
+      ctx.font = `${10 / scale}px sans-serif`;
+      ctx.textAlign = "left";
+      ctx.fillText("Äppelkojan", TREEHOUSE.x + 8 / scale, TREEHOUSE.z + 14 / scale);
+    }
     city.drawWorldMap(ctx);
     ctx.fillStyle = "#86958d";
     ctx.fillRect(648, 638, 52, 34);
@@ -771,6 +845,10 @@ async function init(): Promise<void> {
     ctx.translate(ox, oy);
     ctx.scale(scale, scale);
     ctx.drawImage(mapBase, 0, 0);
+    ctx.fillStyle = "#ffcb6b";
+    ctx.fillRect(toMap(TREEHOUSE.x) - 4, toMap(TREEHOUSE.z) - 4, 8, 8);
+    ctx.font = "10px sans-serif";
+    ctx.fillText("Äppelkojan", toMap(TREEHOUSE.x) + 8, toMap(TREEHOUSE.z) + 3);
     for (const landmark of LANDMARKS) {
       const x = toMap(landmark.x);
       const z = toMap(landmark.z);
@@ -857,6 +935,28 @@ async function init(): Promise<void> {
     if (overlay === "dialogue") { showOverlay(null); return; }
     if (overlay || !started) return;
     if (sleep) return;
+    if (!inCity && !indoors() && !aviation.active) {
+      if (treehouse.climbing) return;
+      const action = treehouse.interaction(player.group.position);
+      if (action) {
+        if (!grounded || jumpPreparation > 0) { toast("Landa innan du använder stegen eller kistan."); return; }
+        resetMovement();
+        if (treehouse.interact(action, player.group.position)) {
+          if (action === "chest") {
+            werewolves.banditsEnabled = true;
+            element("sword-count").textContent = "× 2";
+            element("treasure-status").textContent = "Hittat: pilbåge, extra svärd och fiskespö! Pilarna tar aldrig slut. Fiskespöet kan hållas, men fiske är ännu inte spelbart.";
+            element<HTMLButtonElement>("equip-bow").disabled = false;
+            element<HTMLButtonElement>("equip-rod").disabled = false;
+            toast("Skatten är din! 2 väljer pilbågen, 1 svärdet och 3 fiskespöet. Stegen till höger leder till taket.");
+          } else {
+            player.equipSword(false);
+            toast(`${treehouseLabels[action]} · Du klättrar automatiskt längs plankorna.`);
+          }
+        }
+        return;
+      }
+    }
     if (jailed) { toast(`Du blir frigiven om ${Math.ceil(jailRemaining)} sekunder. Öppna paneler pausar tiden.`); return; }
     if (aviation.active) {
       if (aviation.crashRemaining > 0) { toast("Planet har kraschat. Du återvänder snart till flygplatsen."); return; }
@@ -983,13 +1083,18 @@ async function init(): Promise<void> {
     if (event.code === "KeyV" && started && !overlay && aviation.active) { aviation.toggleView(); return; }
     if (sleep) return;
     if (started && !overlay) {
+      if (treehouse.climbing) return;
       if (event.code === "Space" && !city.activeVehicle && !aviation.active && grounded && jumpPreparation === 0) {
         jumpPreparation = 0.1;
         player.prepareJump();
         return;
       }
       if (event.code === "Digit1") { equipSword(); return; }
+      if (event.code === "Digit2") { equipTool("bow"); return; }
+      if (event.code === "Digit3") { equipTool("rod"); return; }
+      if (event.code === "KeyQ" && tool === "bow") { aiming = !aiming; return; }
       if (event.code === "KeyF") {
+        if (tool === "bow") { shoot(); return; }
         if (aviation.active) { toast("Svärdet vilar under flygningen."); return; }
         if (inCity) { toast("Staden är en trygg plats. Här kör vi och utforskar utan strider."); return; }
         if (!survival.equipped) toast("Utrusta svärdet med 1 eller öppna ryggsäcken med B.");
@@ -1014,7 +1119,9 @@ async function init(): Promise<void> {
     if (document.hidden && started && !overlay) showOverlay("help");
   });
   canvas.addEventListener("pointerdown", (event) => {
-    if (!started || overlay || event.button !== 0) return;
+    if (!started || overlay) return;
+    if (aiming && event.button === 0) { shoot(); return; }
+    if (event.button !== (aiming ? 2 : 0)) return;
     dragging = true;
     lastPointerX = event.clientX;
     lastPointerY = event.clientY;
@@ -1022,16 +1129,21 @@ async function init(): Promise<void> {
   });
   canvas.addEventListener("pointermove", (event) => {
     if (!dragging || overlay) return;
-    yaw -= (event.clientX - lastPointerX) * 0.005;
-    pitch = THREE.MathUtils.clamp(pitch + (event.clientY - lastPointerY) * 0.004, 0.13, 0.95);
+    const sensitivity = aiming ? aimZoom / 52 : 1;
+    yaw -= (event.clientX - lastPointerX) * 0.005 * sensitivity;
+    pitch = THREE.MathUtils.clamp(pitch + (event.clientY - lastPointerY) * 0.004 * sensitivity, aiming ? -1.35 : 0.13, aiming ? 1.45 : 0.95);
     lastPointerX = event.clientX;
     lastPointerY = event.clientY;
   });
   canvas.addEventListener("pointerup", () => { dragging = false; });
   canvas.addEventListener("lostpointercapture", () => { dragging = false; });
+  canvas.addEventListener("contextmenu", event => event.preventDefault());
   canvas.addEventListener("wheel", (event) => {
     event.preventDefault();
-    if (started && !overlay) distance = THREE.MathUtils.clamp(distance + event.deltaY * 0.01, 4, 18);
+    if (started && !overlay) {
+      if (aiming) aimZoom = THREE.MathUtils.clamp(aimZoom + event.deltaY * 0.035, 18, 52);
+      else distance = THREE.MathUtils.clamp(distance + event.deltaY * 0.01, 4, 18);
+    }
   }, { passive: false });
   window.addEventListener("resize", () => {
     camera.aspect = innerWidth / innerHeight;
@@ -1071,6 +1183,16 @@ async function init(): Promise<void> {
   }
 
   function updatePlayer(dt: number): void {
+    if (treehouse.climbing) {
+      treehouse.update(dt, player.group.position);
+      player.group.rotation.y = treehouse.climbHeading;
+      player.climb(elapsed);
+      if (!treehouse.climbing) {
+        player.equipSword(survival.equipped);
+        grounded = true;
+      }
+      return;
+    }
     if (aviation.active) {
       const message = aviation.update(dt, keys, globalHeight, globalFlightBlocked,
         impact => crashEffects.impact(impact, scene, [aviation.plane, player.group], globalHeight));
@@ -1121,7 +1243,7 @@ async function init(): Promise<void> {
       position: new THREE.Vector3(x, pos.y, z), vehicle: null, available: true,
     })) && !ground.blocked(x, z, PLAYER_RADIUS)
       && (indoors() || (inCity ? !city.vehicleBlocked(x, z, PLAYER_RADIUS) && !city.pedestrianBlocked(x, z, PLAYER_RADIUS)
-        : !werewolves.blocked(x, z)))
+        : treehouse.elevated || !werewolves.blocked(x, z)))
       && ground.heightAt(x, z) - ground.heightAt(pos.x, pos.z) < 0.7;
     // Resolve axes separately so the player slides along obstacles instead of sticking.
     const newX = pos.x + velocity.x * dt;
@@ -1132,6 +1254,10 @@ async function init(): Promise<void> {
     if (!grounded) {
       verticalVelocity -= 22 * dt;
       pos.y += verticalVelocity * dt;
+      if (treehouse.level === "deck" && !inCity && !indoors() && pos.y > treehouse.roof - 2.2) {
+        pos.y = treehouse.roof - 2.2;
+        verticalVelocity = Math.min(0, verticalVelocity);
+      }
       if (pos.y <= floor) {
         pos.y = floor;
         verticalVelocity = 0;
@@ -1150,6 +1276,15 @@ async function init(): Promise<void> {
   }
 
   function updateDiscovery(): void {
+    element("bow-sight").hidden = !aiming || overlay !== null;
+    element("equip-bow").setAttribute("aria-pressed", String(tool === "bow"));
+    element("equip-rod").setAttribute("aria-pressed", String(tool === "rod"));
+    if (!inCity && !aviation.active) {
+      element("weapon-status").textContent = treehouse.climbing ? "Klättrar · Utrustningen vilar"
+        : tool === "bow" ? "Pilbåge · Q sikte · F skjut · Obegränsade pilar"
+        : tool === "rod" ? "Fiskespö utrustat · Fiske kommer senare"
+        : survival.equipped ? "Svärd utrustat · F för att hugga" : "Svärdet ligger i ryggsäcken";
+    }
     element("police-hud").hidden = !jailed && !police.wanted;
     const policeTitle = jailed ? `Fängelse · ${Math.ceil(jailRemaining)} s kvar` : `Efterlyst · ${police.reason}`;
     const policeDetail = jailed ? "Frigivning efter en minut · Paneler pausar tiden."
@@ -1159,8 +1294,8 @@ async function init(): Promise<void> {
     if (element("police-detail").textContent !== policeDetail) element("police-detail").textContent = policeDetail;
     element("flight-hud").hidden = !aviation.active || aviation.crashRemaining > 0;
     element("vehicle-hud").hidden = !city.activeVehicle;
-    element("travel").hidden = indoors() || aviation.active;
-    element("bottom-controls").hidden = jailed || city.activeVehicle !== null || aviation.active;
+    element("travel").hidden = indoors() || aviation.active || treehouse.elevated || treehouse.climbing;
+    element("bottom-controls").hidden = jailed || city.activeVehicle !== null || aviation.active || aiming;
     if (jailed) {
       nearNpc = undefined;
       nearHouse = undefined;
@@ -1232,6 +1367,18 @@ async function init(): Promise<void> {
       return;
     }
     const pos = player.group.position;
+    if (treehouse.elevated || treehouse.climbing || Math.hypot(pos.x - TREEHOUSE.x, pos.z - TREEHOUSE.z) < 12) {
+      locationId = "treehouse";
+      nearNpc = undefined;
+      nearHouse = undefined;
+      element("location").textContent = treehouse.level === "roof" ? "Äppelkojans tak" : "Äppelkojan";
+      element("location-detail").textContent = treehouse.climbing ? "På plankstegen · Upp bland äpplena"
+        : treehouse.elevated ? "En koja av plankor högt över skogen" : "Skatten väntar högt i äppelträdet · E vid stegen";
+      const action = treehouse.interaction(pos);
+      element("interaction").hidden = !action || overlay !== null;
+      if (action) element("interaction-text").textContent = treehouseLabels[action];
+      return;
+    }
     const landmark = LANDMARKS.find((place) => Math.hypot(pos.x - place.x, pos.z - place.z) < place.radius);
     const besideLake = ((pos.x - LAKE.x) / (LAKE.rx + 14)) ** 2 + ((pos.z - LAKE.z) / (LAKE.rz + 14)) ** 2 < 1;
     const onCityTrail = Math.abs(pos.x) < 12 && pos.z > 60;
@@ -1263,6 +1410,23 @@ async function init(): Promise<void> {
   }
 
   function updateCamera(dt: number): void {
+    const bowView = aiming && !inCity && !indoors() && !aviation.active && !treehouse.climbing;
+    viewBow.visible = bowView && !overlay;
+    if (!aviation.active) {
+      const fov = bowView ? aimZoom : 52;
+      if (camera.fov !== fov) { camera.fov = fov; camera.updateProjectionMatrix(); }
+      if (!city.activeVehicle) player.group.visible = !bowView;
+    }
+    if (bowView) {
+      camera.up.set(0, 1, 0);
+      camera.position.copy(player.group.position).add(new THREE.Vector3(0, 1.7, 0));
+      cameraOffset.set(-Math.sin(yaw) * Math.cos(pitch), -Math.sin(pitch), -Math.cos(yaw) * Math.cos(pitch));
+      camera.lookAt(target.copy(camera.position).add(cameraOffset));
+      camera.updateMatrixWorld(true);
+      player.group.rotation.y = yaw + Math.PI;
+      return;
+    }
+    pitch = THREE.MathUtils.clamp(pitch, 0.13, 0.95);
     if (aviation.active) {
       aviation.updateCamera(camera, overlay ? 0 : dt);
       if (!aviation.cockpit) {
@@ -1306,6 +1470,7 @@ async function init(): Promise<void> {
       const p = inCity ? cityToWorld(desiredCamera) : desiredCamera;
       const local = worldToCity(p);
       if (desiredCamera.y < ground + 0.6 || city.cameraBlocked(local.x, local.y, local.z)
+        || treehouse.solidAt(p.x, p.y, p.z, 0.2)
         || aviation.flightBlocked(p.x, p.y, p.z, 0.2)
         || (p.z < FOREST_JOIN && desiredCamera.y < ground + 5 && world.blocked(p.x, p.z, 0.15))) {
         safeDistance = Math.max(1.2, d - 0.5);
@@ -1336,7 +1501,16 @@ async function init(): Promise<void> {
           updateSurvival(0);
         } else {
           updatePlayer(dt);
+          if (!treehouse.climbing) treehouse.update(dt, player.group.position);
           updateSurvival(dt);
+          const hits = archery.update(dt, () => werewolves.arrowTargets(), point => world.projectileBlocked(point));
+          if (hits > 0) {
+            arrowFeedback = 0.8;
+            element("arrow-feedback").textContent = "Träff! Fienden försvann i ett skimmer.";
+          }
+          arrowFeedback = Math.max(0, arrowFeedback - dt);
+          if (arrowFeedback === 0) element("arrow-feedback").textContent = "";
+          viewBow.rotation.z = THREE.MathUtils.damp(viewBow.rotation.z, 0, 10, dt);
           city.update(dt, survival.daylight, worldToCity(globalPosition()));
           updatePolice(dt);
           if (currentVenue) venueInterior.update(dt, player.group.position);

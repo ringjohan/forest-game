@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { SWORD_SWING_SECONDS } from "./combat";
+import { makeBow, makeFishingRod } from "./archery";
 
 const skin = new THREE.MeshStandardMaterial({ color: 0xd7ac83, roughness: 0.85 });
 const leather = new THREE.MeshStandardMaterial({ color: 0x49392c, roughness: 0.95 });
@@ -34,6 +35,8 @@ export class Character {
   private readonly body = new THREE.Group();
   private readonly sword = new THREE.Group();
   private readonly backpack = new THREE.Group();
+  private readonly bow = makeBow();
+  private readonly fishingRod = makeFishingRod();
   private sleeping = false;
   private seated = false;
   private equipped = false;
@@ -97,6 +100,12 @@ export class Character {
     part(this.sword, new THREE.BoxGeometry(0.08, 0.08, 0.23), leather, 0, 0, -0.05);
     this.rightArm.add(this.sword);
     this.sword.visible = false;
+    this.bow.position.set(0, -0.45, 0.2);
+    this.fishingRod.position.set(0, -0.5, 0.1);
+    this.fishingRod.rotation.x = 0.5;
+    this.leftArm.add(this.bow);
+    this.rightArm.add(this.fishingRod);
+    this.bow.visible = this.fishingRod.visible = false;
     this.slash.rotation.x = -Math.PI / 2;
     this.slash.position.set(0, 1.1, 0.3);
     this.slash.visible = false;
@@ -123,6 +132,19 @@ export class Character {
       this.swingTime = 0;
       this.slash.visible = false;
     }
+
+  }
+
+  equipTool(tool: "bow" | "rod" | null): void {
+    this.bow.visible = tool === "bow";
+    this.fishingRod.visible = tool === "rod";
+  }
+
+  climb(elapsed: number): void {
+    this.leftArm.rotation.x = -2.5 + Math.sin(elapsed * 7) * 0.4;
+    this.rightArm.rotation.x = -2.5 - Math.sin(elapsed * 7) * 0.4;
+    this.leftLeg.rotation.x = Math.sin(elapsed * 7) * 0.5;
+    this.rightLeg.rotation.x = -Math.sin(elapsed * 7) * 0.5;
   }
 
   setSleeping(sleeping: boolean): void {

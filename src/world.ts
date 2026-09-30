@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { CITY_TRAIL, LANDMARKS, LAKE, SPAWN, WORLD_LIMIT, WORLD_SIZE } from './world-types';
 import type { House } from './world-types';
 import { onForestApproach } from './geography';
+import { TREEHOUSE, Treehouse } from './treehouse';
 export type { House } from './world-types';
 
 type Point = { x: number; z: number };
@@ -30,6 +31,7 @@ const VILLAGE_LAYOUTS = [
 export const PATHS: readonly (readonly { x: number; z: number }[])[] = [
   [{ x: 0, z: 67 }, SPAWN, { x: 0, z: 0 }],
   CITY_TRAIL,
+  [{ x: 0, z: 67 }, { x: TREEHOUSE.x - 3, z: TREEHOUSE.z + 1.5 }],
   [
     { x: 0, z: 0 }, { x: -23, z: -15 }, { x: -52, z: -39 },
     { x: -73, z: -67 }, { x: -99, z: -85 },
@@ -77,13 +79,14 @@ function noise(x: number, z: number): number {
 
 /** A deterministic landscape. Collision and placement use the rendered terrain triangles. */
 export class World {
+  readonly treehouse: Treehouse;
   private readonly houseList: House[] = [];
   readonly houses: readonly House[] = this.houseList;
   private readonly scene: THREE.Scene;
   private seed = 19051987;
   private readonly heights = new Float32Array((GRID + 1) * (GRID + 1));
   private readonly circles: Circle[] = [];
-  private readonly treeVolumes: (Circle & { bottom: number; top: number })[] = [];
+  private readonly treeVolumes: (Circle & { bottom: number; top: number; trunkRadius: number })[] = [];
   private readonly buildings: Building[] = [];
   private readonly collisionCells = new Map<string, Circle[]>();
   private readonly batches = new Map<string, Batch>();
@@ -101,6 +104,8 @@ export class World {
     this.makeVillages();
     this.makeForest();
     this.makeGroundCover();
+    this.treehouse = new Treehouse(scene, (x, z) => this.heightAt(x, z));
+    this.obstacle(TREEHOUSE.x - 3, TREEHOUSE.z, 0.9);
     this.makeLake();
     this.makeMountains();
     this.makeCityTrailSigns();
@@ -140,6 +145,7 @@ export class World {
   }
 
   flightBlocked(x: number, y: number, z: number, radius: number): boolean {
+    if (this.treehouse.solidAt(x, y, z, radius)) return true;
     if (Math.abs(x) > HALF + radius + 8 || Math.abs(z) > HALF + radius + 8) return false;
     if (this.treeVolumes.some(tree => y + radius > tree.bottom && y - radius < tree.top
       && Math.hypot(x - tree.x, z - tree.z) < tree.radius + radius)) return true;
@@ -151,6 +157,24 @@ export class World {
       const s = Math.sin(building.rotation);
       return Math.abs(dx * c - dz * s) < building.halfX + radius
         && Math.abs(dx * s + dz * c) < building.halfZ + radius;
+    });
+  }
+
+  projectileBlocked(point: THREE.Vector3): boolean {
+    if (point.y <= this.heightAt(point.x, point.z) || this.treehouse.solidAt(point.x, point.y, point.z, 0.04)) return true;
+    for (const tree of this.treeVolumes) {
+      if (point.y < tree.bottom || point.y > tree.top) continue;
+      const radius = point.y < tree.bottom + (tree.top - tree.bottom) * 0.52 ? tree.trunkRadius : tree.radius;
+      if (Math.hypot(point.x - tree.x, point.z - tree.z) < radius + 0.04) return true;
+    }
+    return this.buildings.some(building => {
+      if (point.y > this.heightAt(building.x, building.z) + 10) return false;
+      const dx = point.x - building.x;
+      const dz = point.z - building.z;
+      const c = Math.cos(building.rotation);
+      const s = Math.sin(building.rotation);
+      return Math.abs(dx * c - dz * s) < building.halfX + 0.04
+        && Math.abs(dx * s + dz * c) < building.halfZ + 0.04;
     });
   }
 
@@ -756,9 +780,10 @@ export class World {
   }
 
   private tree(x: number, z: number, type: number, height: number): void {
+    if (Math.hypot(x - TREEHOUSE.x, z - TREEHOUSE.z) < TREEHOUSE.clearing) return;
     const y = this.heightAt(x, z) - 0.08;
-    this.treeVolumes.push({ x, z, radius: height * 0.25, bottom: y, top: y + height * 1.12 });
     const radius = height * (type === 2 ? 0.023 : 0.031);
+    this.treeVolumes.push({ x, z, radius: height * 0.25, bottom: y, top: y + height * 1.12, trunkRadius: radius });
     const yaw = this.random() * Math.PI * 2;
     const bark = type === 2 ? '#e1ddd0' : type === 1 ? '#89715a' : '#76624d';
     const trunkHeight = type === 1 ? height * 0.88 : height * 0.66;
@@ -850,6 +875,7 @@ export class World {
     for (let i = 0; i < 340; i++) {
       const x = this.range(-195, 195);
       const z = this.range(-195, 195);
+      if (Math.hypot(x - TREEHOUSE.x, z - TREEHOUSE.z) < TREEHOUSE.clearing) continue;
       if (this.pathDistance(x, z) < 4.6 || this.insideVillage(x, z, 26) || this.lakeDistance(x, z) < 1.12 || this.blocked(x, z, 2)) continue;
       if (this.inIntroVista(x, z)) continue;
       const size = this.range(0.45, 2.3);
