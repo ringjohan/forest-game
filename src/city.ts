@@ -64,7 +64,22 @@ export type Vehicle = {
   route: THREE.Vector3[];
   waypoint: number;
   automatic: boolean;
+  /** Smoothed steering input in [-1, 1]. */
+  steer: number;
+  /** Hidden and non-solid after a crash until it is returned to its home pose. */
+  wrecked: boolean;
+  repairPending: boolean;
+  home: { x: number; z: number; heading: number; waypoint: number; automatic: boolean };
 };
+
+/** "static" = buildings and street furniture, "moving" = vehicles and people, "edge" = city boundary. */
+export type VehicleObstacle = "static" | "moving" | "edge";
+export type VehicleCrash = { obstacle: VehicleObstacle; speed: number; contact: THREE.Vector3; center: THREE.Vector3 };
+
+/** Collisions at or above 70 km/h destroy the player's vehicle; slower bumps just stop it. */
+export const CRASH_SPEED = 70 / 3.6;
+const BMW_MIN_TURN_RADIUS = 4.2;
+const BMW_MAX_YAW_RATE = 2.1;
 
 export class City {
   readonly scene = new THREE.Scene();
@@ -238,7 +253,7 @@ export class City {
   }
 
   vehicleBlocked(x: number, z: number, radius: number, except?: Vehicle): boolean {
-    return this.vehicles.some(v => v !== except
+    return this.vehicles.some(v => v !== except && !v.wrecked
       && circleIntersectsFootprint(x, z, radius, this.vehicleFootprint(v)));
   }
 
@@ -252,24 +267,30 @@ export class City {
   }
 
   vehiclePoseBlocked(vehicle: Vehicle, x: number, z: number, heading: number): boolean {
+    return this.vehiclePoseObstacle(vehicle, x, z, heading) !== null;
+  }
+
+  vehiclePoseObstacle(vehicle: Vehicle, x: number, z: number, heading: number): VehicleObstacle | null {
     const shape = this.vehicleFootprint(vehicle, x, z, heading);
     for (const corner of footprintCorners(shape)) {
       if (Math.abs(corner.x) <= CITY_LIMIT && Math.abs(corner.z) <= CITY_LIMIT) continue;
       const global = cityToWorld(new THREE.Vector3(corner.x, 0, corner.z));
-      if (!onForestApproach(global.x, global.z) && !onAirportApproach(global.x, global.z)) return true;
+      if (!onForestApproach(global.x, global.z) && !onAirportApproach(global.x, global.z)) return "edge";
     }
     if (this.blocks.some(b => footprintsIntersect(shape, {
       x: b.x, z: b.z, halfWidth: b.width / 2, halfLength: b.depth / 2, heading: 0,
-    }))) return true;
-    if (this.streetFurniture.some(p => circleIntersectsFootprint(p.x, p.z, p.radius, shape))) return true;
-    if (this.vehicles.some(other => other !== vehicle && footprintsIntersect(shape, this.vehicleFootprint(other)))) return true;
+    }))) return "static";
+    if (this.streetFurniture.some(p => circleIntersectsFootprint(p.x, p.z, p.radius, shape))) return "static";
+    if (this.vehicles.some(other => other !== vehicle && !other.wrecked
+      && footprintsIntersect(shape, this.vehicleFootprint(other)))) return "moving";
     return this.officers.some(o => circleIntersectsFootprint(o.character.group.position.x, o.character.group.position.z, 0.5, shape))
-      || this.pedestrians.some(p => circleIntersectsFootprint(p.character.group.position.x, p.character.group.position.z, 0.45, shape));
+      || this.pedestrians.some(p => circleIntersectsFootprint(p.character.group.position.x, p.character.group.position.z, 0.45, shape))
+      ? "moving" : null;
   }
 
   nearVehicle(position: THREE.Vector3): Vehicle | undefined {
     return this.vehicles
-      .filter(v => !v.policeDuty && Math.abs(v.speed) < 1 && Math.abs(position.y) < 3
+      .filter(v => !v.policeDuty && !v.wrecked && Math.abs(v.speed) < 1 && Math.abs(position.y) < 3
         && circleIntersectsFootprint(position.x, position.z, 2.4, this.vehicleFootprint(v)))
       .sort((a, b) => a.group.position.distanceToSquared(position) - b.group.position.distanceToSquared(position))[0];
   }
@@ -327,6 +348,7 @@ export class City {
     ctx.fillRect(-18, -18, 36, 36);
     ctx.fillRect(42, -18, 36, 36);
     for (const vehicle of this.vehicles) {
+      if (vehicle.wrecked) continue;
       ctx.fillStyle = vehicle.kind === "police" ? "#6eb4ff" : "#ffd878";
       ctx.fillRect(vehicle.group.position.x - 2, vehicle.group.position.z - 2, 4, 4);
     }
@@ -341,6 +363,7 @@ export class City {
     if (vehicle.policeDuty) throw new Error("En polisbil i tjänst kan inte lånas.");
     vehicle.automatic = false;
     vehicle.speed = 0;
+    vehicle.steer = 0;
     this.activeVehicle = vehicle;
   }
 
@@ -362,18 +385,62 @@ export class City {
     return null;
   }
 
-  drive(dt: number, throttle: number, steering: number, brake: boolean, contact?: (shape: Footprint) => boolean): void {
+  /** Returns crash details when the player's vehicle hits an obstacle at {@link CRASH_SPEED} or faster. */
+  drive(dt: number, throttle: number, steering: number, brake: boolean, contact?: (shape: Footprint) => boolean): VehicleCrash | null {
     const v = this.activeVehicle;
-    if (!v) return;
+    if (!v) return null;
     const acceleration = v.kind === "bmw" ? 26 : v.kind === "bus" ? 7 : 12;
     if (brake) v.speed = THREE.MathUtils.damp(v.speed, 0, v.kind === "bmw" ? 12 : 9, dt);
     else if (throttle !== 0) v.speed += throttle * acceleration * dt;
     else v.speed = THREE.MathUtils.damp(v.speed, 0, v.kind === "bmw" ? 0.25 : 0.7, dt);
     v.speed = THREE.MathUtils.clamp(v.speed, -7, v.maxSpeed);
     if (Math.abs(v.speed) < 0.03) v.speed = 0;
-    const stability = v.kind === "bmw" ? THREE.MathUtils.clamp(16 / (Math.abs(v.speed) + 8), 0.22, 1) : 1;
-    const turn = -steering * Math.min(Math.abs(v.speed) / 5, 1) * Math.sign(v.speed) * dt * 1.25 * stability;
-    this.advanceVehicle(v, dt, turn, contact);
+    let turn: number;
+    if (v.kind === "bmw") {
+      // Grippy arcade handling: tight radius at low speed, quick yaw through city corners, calmer at top speed.
+      v.steer = THREE.MathUtils.damp(v.steer, steering, 12, dt);
+      const speed = Math.abs(v.speed);
+      const yawRate = Math.min(speed / BMW_MIN_TURN_RADIUS,
+        BMW_MAX_YAW_RATE * THREE.MathUtils.clamp(30 / (speed + 12), 0.3, 1));
+      turn = -v.steer * yawRate * Math.sign(v.speed) * dt;
+    } else {
+      turn = -steering * Math.min(Math.abs(v.speed) / 5, 1) * Math.sign(v.speed) * dt * 1.25;
+    }
+    const speed = v.speed;
+    const { obstacle, pose } = this.advanceVehicle(v, dt, turn, contact);
+    if (!obstacle || !pose || Math.abs(speed) < CRASH_SPEED) return null;
+    const forward = Math.sign(speed) * v.halfLength;
+    return {
+      obstacle,
+      speed: Math.abs(speed),
+      center: new THREE.Vector3(pose.x, 0.8, pose.z),
+      contact: new THREE.Vector3(pose.x + Math.sin(pose.heading) * forward, 0.6, pose.z + Math.cos(pose.heading) * forward),
+    };
+  }
+
+  /** Destroys the vehicle: it disappears and stops colliding until {@link repair} returns it home. */
+  wreck(vehicle: Vehicle): void {
+    if (this.activeVehicle === vehicle) this.activeVehicle = null;
+    vehicle.speed = vehicle.steer = 0;
+    vehicle.automatic = false;
+    vehicle.wrecked = true;
+    vehicle.repairPending = false;
+    vehicle.group.visible = false;
+  }
+
+  /** Returns a wreck to its original parking spot, now or as soon as that spot is clear. */
+  repair(vehicle: Vehicle, player?: THREE.Vector3): boolean {
+    if (!vehicle.wrecked) return true;
+    vehicle.repairPending = true;
+    const { x, z, heading } = vehicle.home;
+    if (this.vehiclePoseBlocked(vehicle, x, z, heading)
+      || (player && circleIntersectsFootprint(player.x, player.z, 1, this.vehicleFootprint(vehicle, x, z, heading)))) return false;
+    vehicle.group.position.set(x, 0, z);
+    vehicle.group.rotation.y = heading;
+    vehicle.waypoint = vehicle.home.waypoint;
+    vehicle.automatic = vehicle.home.automatic;
+    vehicle.wrecked = vehicle.repairPending = false;
+    return true;
   }
 
   createPatrol(x: number, z: number, heading: number): Vehicle {
@@ -386,19 +453,29 @@ export class City {
   movePatrol(vehicle: Vehicle, dt: number, heading: number, speed: number, contact?: (shape: Footprint) => boolean): boolean {
     const turn = Math.atan2(Math.sin(heading - vehicle.group.rotation.y), Math.cos(heading - vehicle.group.rotation.y));
     vehicle.speed = THREE.MathUtils.clamp(speed, 0, vehicle.maxSpeed);
-    return this.advanceVehicle(vehicle, dt, turn, contact);
+    return this.advanceVehicle(vehicle, dt, turn, contact).moved;
   }
 
-  private advanceVehicle(v: Vehicle, dt: number, turn: number, contact?: (shape: Footprint) => boolean): boolean {
+  private advanceVehicle(v: Vehicle, dt: number, turn: number, contact?: (shape: Footprint) => boolean):
+    { moved: boolean; obstacle: VehicleObstacle | null; pose: { x: number; z: number; heading: number } | null } {
     // Sweep translation and rotation; a 400 km/h car must not skip thin obstacles.
     const steps = Math.max(1, Math.ceil((Math.abs(v.speed) * dt + Math.abs(turn) * v.radius) / 0.2));
     let moved = false;
     let travelled = 0;
+    let obstacle: VehicleObstacle | null = null;
+    let pose: { x: number; z: number; heading: number } | null = null;
     for (let step = 0; step < steps; step++) {
       const heading = v.group.rotation.y + turn / steps;
       const x = v.group.position.x + Math.sin(heading) * v.speed * dt / steps;
       const z = v.group.position.z + Math.cos(heading) * v.speed * dt / steps;
-      if (contact?.(this.vehicleFootprint(v, x, z, heading)) || this.vehiclePoseBlocked(v, x, z, heading)) {
+      // Police contact is an arrest, not a crash, so it is checked first and never reported as an obstacle.
+      if (contact?.(this.vehicleFootprint(v, x, z, heading))) {
+        v.speed = 0;
+        break;
+      }
+      obstacle = this.vehiclePoseObstacle(v, x, z, heading);
+      if (obstacle) {
+        pose = { x, z, heading };
         v.speed = 0;
         break;
       }
@@ -409,7 +486,7 @@ export class City {
       v.group.position.set(x, 0, z);
     }
     this.spinWheels(v, dt, travelled);
-    return moved;
+    return { moved, obstacle, pose };
   }
 
   update(dt: number, daylight: number, player: THREE.Vector3): void {
@@ -441,7 +518,9 @@ export class City {
       positions.needsUpdate = true;
     }
     for (const vehicle of this.vehicles) {
-      vehicle.group.visible = vehicle === this.activeVehicle || vehicle.group.position.distanceToSquared(player) < 170 ** 2;
+      if (vehicle.wrecked && vehicle.repairPending) this.repair(vehicle, player);
+      vehicle.group.visible = !vehicle.wrecked
+        && (vehicle === this.activeVehicle || vehicle.group.position.distanceToSquared(player) < 170 ** 2);
       if (vehicle.detail) {
         vehicle.detail.visible = vehicle.group.position.distanceToSquared(player) < 45 ** 2;
         vehicle.body.visible = !vehicle.detail.visible;
@@ -1161,6 +1240,8 @@ export class City {
       group, kind, radius, halfWidth, halfLength, centerX: center.x, centerZ: center.z, policeDuty: false, speed: 0,
       maxSpeed: kind === "bmw" ? 400 / 3.6 : kind === "bus" ? 19 : kind === "car" ? 32 : 25,
       wheels, body, detail, detailWheels, route: [], waypoint: 0, automatic: false,
+      steer: 0, wrecked: false, repairPending: false,
+      home: { x, z, heading, waypoint: 0, automatic: false },
     };
     this.vehicles.push(vehicle);
     return vehicle;
@@ -1191,6 +1272,8 @@ export class City {
       v.route = route;
       v.waypoint = (start + 1) % 4;
       v.automatic = true;
+      v.home.waypoint = v.waypoint;
+      v.home.automatic = true;
     }
   }
 

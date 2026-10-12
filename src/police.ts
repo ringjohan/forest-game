@@ -195,7 +195,7 @@ export class TrafficPolice {
       const x = THREE.MathUtils.lerp(from.x, to.x, fraction);
       const z = THREE.MathUtils.lerp(from.z, to.z, fraction);
       if (this.city.blocked(x, z, 0.3)) return false;
-      if (this.city.vehicles.some(other => other !== vehicle && other !== subject.vehicle
+      if (this.city.vehicles.some(other => other !== vehicle && other !== subject.vehicle && !other.wrecked
         && circleIntersectsFootprint(x, z, 0.3, this.city.vehicleFootprint(other)))) return false;
     }
     return true;

@@ -37,6 +37,9 @@ flygstyrning och faktisk stigning till 10 000 meter. De verifierar också
 flygplanets gångkollision, bilarnas verkliga bredd, BMW:ns uppmätta toppfart,
 rödljusbrott, hastighetsgränsen, polisjakt, omedelbart gripande vid kontakt,
 krascheffekter, bestående brandskador och möjligheten att komma undan.
+Rymdcentret testas också: gångvägen till hissen, raketens kollision mot
+flygplan, nedräkningen som väntar på rymdens grafik, uppskjutningen,
+asteroidkollision mot den verkliga kraterytan och jordens orientering mot solen.
 De använder spelets riktiga världs- och flygkod
 i webbläsaren utan extra testberoenden.
 
@@ -255,6 +258,83 @@ flyga igenom. Öppna paneler pausar även kraschsekvensen och röken.
 Snabbresa och svärd är avstängda ombord. Karta, hjälp, dialoger,
 ryggsäck och tappat fönsterfokus pausar även flygningen.
 Flygplats, flygplan och cockpit genereras lokalt utan nya resursnedladdningar.
+
+## Rymdcenter och rymdfärd
+
+Grönved Rymdcenter (startplatta LC-1) ligger inne på flygplatsen, väster om
+landningsbanan. Följ den gula gångvägen från flygplatsens förplats. Där står
+den tvåstegs bärraketen **Nordstjärnan** (77 m) i sitt servicetorn, med
+flamränna, tankfarm för LOX och RP-1, vattentorn, åskmaster och strålkastare.
+Gå till hissen vid tornets fot och tryck **E** för att gå ombord.
+
+- **Nedräkning:** åtkomstarmen svänger bort, syre ventileras och motorerna
+  tänds vid T−3. Kameran klipper mellan fasta vinklar som i en tv-sändning.
+- **Uppskjutning:** raketen lyfter genom ånga och rök, gör en
+  gravitationsvändning och himlen mörknar med höjden.
+- **I omloppsbana:** MECO, stegseparation, andra stegets vakuummotor,
+  räddningstornet och nyttolastkåpan släpps, och rymdfarkosten separerar och
+  fäller ut solpanelerna. **Enter** hoppar direkt till rymden.
+
+I rymden styr du farkosten själv:
+
+| Tangent | Funktion |
+| --- | --- |
+| **W / S** | Gas / back · W lämnar omloppsbanan och du flyger själv |
+| **Q / E** | Fartväxel: 100 m/s, 1, 10, 100, 1 000, 10 000, 100 000 km/s, ljusfart och 10–1 000 × ljusfart |
+| **↑ ↓** | Tippa nosen |
+| **← →** | Gira |
+| **A / D** | Rolla |
+| **Shift** | Boost ×10 |
+| **Space / F** | Laser mot asteroider, meteoroider och satelliter |
+| **B** | Gå in i omloppsbana där du är |
+| **J** | Autopilot till valt mål |
+| **X** | Broms |
+| **T** | Tidsacceleration i omloppsbana (×1, ×10, ×50, ×250) |
+| **1–9, 0** | Välj mål: Jorden, Månen, Mars, Venus, Merkurius, asteroidbältet, Jupiter, Saturnus, Uranus eller Neptunus. Samma siffra igen startar autopiloten |
+| **H** | Återinträde och hem till Grönved |
+| **V** | Växla mellan yttre vy och förarplatsen inne i kapseln |
+| **R / U** | Återställ kameran / dölj panelerna |
+| Dra / scrolla | Kamera runt farkosten / zoom; i kapseln vrider du huvudet |
+
+Solsystemet har verkliga radier och avstånd, och farkosten följer en verklig
+cirkulär omloppsbana (7,67 km/s runt jorden). Den börjar ovanför Skandinavien.
+Jorden har 8K-texturer för dag, natt med stadsljus, moln med skuggor,
+höjdkarta och havsreflex. Atmosfären är strålspårad med Rayleigh- och
+Mie-spridning, och samma spridning används för Mars och Venus. Månen,
+Merkurius och Mars får procedurella kratrar och regolit på nära håll.
+Saturnus ringar kastar skugga på planeten och vice versa. Himlen är ett
+8K-panorama av Vintergatan med 9 000 extra stjärnor, och solen ger linsreflex
+när den syns.
+
+Du kan köra själv till varje planet. Välj mål med en siffra: en markör visar
+riktning, avstånd och beräknad ankomsttid, och varnar om en planet är i vägen.
+Sikta, välj växel och håll W. När du är framme går farkosten själv in i
+omloppsbana. En gravitationsbroms håller nere farten nära planeter och månar,
+så du aldrig flyger förbi eller in i dem i hög fart. Mellan planeterna öppnas de
+högsta växlarna: Månen–Jorden tar omkring tio sekunder och Jorden–Mars knappt
+tjugo. Autopiloten följer en böjd rutt som aldrig går genom en himlakropp.
+
+Lasern (Space eller F) skjuter tändstickstunna skott mot det hårkors som visar
+var skotten möts. Asteroider tar flera träffar och stora stenar spricker i
+tumlande bitar som kan skjutas igen. Meteoroider dyker upp ibland och korsar
+kursen; skjut dem eller väj undan. Satelliter med blinkande fyrar driver kring
+varje stopp och sprängs efter några träffar. Panelen räknar dina träffar.
+
+Asteroidfälten kring jorden och i asteroidbältet har detaljerade, procedurellt
+kratererade asteroider med triplanar PBR-sten och nivåer av detaljrikedom.
+Kollisioner följer asteroidens verkliga yta. En krock spränger farkosten i ett
+vakuumeldklot med gnistor och vrakdelar, och du börjar om vid rymdcentret.
+Samma sak händer om du dyker ned i en planet. Återinträdet visar
+servicemodulen som kopplas loss och en plasmamantel runt värmeskölden innan
+kapseln landar hemma. Därefter står en ny raket redo.
+
+Rymdens grafik (cirka 76 MB) laddas först när du närmar dig rymdcentret.
+Nedräkningen väntar vid T−10 om något fortfarande laddas. Snabbresa är
+avstängd under rymdfärden, och du kan inte gå ombord under en polisjakt.
+Planet- och stjärntexturer kommer från Solar System Scope (CC BY 4.0, baserade
+på NASA-data) och stentexturer från ambientCG (CC0); se
+`public/assets/space/CREDITS.txt`. Raketen, rymdcentret, farkosten, asteroiderna
+och alla effekter genereras av spelet.
 
 ## Dag, natt och skydd
 

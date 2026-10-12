@@ -1,0 +1,34 @@
+Grönved Rymdcenter / space flight - third-party assets
+
+All files are hosted locally with the game and are only downloaded by the
+browser when the player approaches the spaceport. No third-party API is
+contacted while playing. The original creators do not endorse this game.
+
+Solar System Scope - Creative Commons Attribution 4.0 International
+https://www.solarsystemscope.com/textures/
+https://creativecommons.org/licenses/by/4.0/
+"Solar Textures" by Solar System Scope (INOVE), based on NASA elevation and
+imagery data (incl. NASA Blue Marble).
+
+Files: earth_day_8k.jpg, earth_night_8k.jpg, earth_clouds_8k.jpg,
+earth_normal_4k.jpg, earth_specular_4k.jpg, moon_8k.jpg, mercury_4k.jpg,
+venus_4k.jpg, mars_8k.jpg, jupiter_4k.jpg, saturn_4k.jpg, saturn_ring.png,
+uranus_2k.jpg, neptune_2k.jpg, sun_2k.jpg, milky_way_8k.jpg
+Modifications: TIFF normal/specular maps converted to JPEG and downscaled to
+4K; some maps re-encoded to JPEG at a different quality; Mercury downscaled
+to 4K. Shading (atmospheric scattering, night lights, ocean glint, relief,
+ring shadows) is computed by the game at runtime.
+
+ambientCG - CC0 1.0 Universal
+https://creativecommons.org/publicdomain/zero/1.0/
+https://docs.ambientcg.com/license/
+
+Rock030: https://ambientcg.com/a/Rock030
+Rock035: https://ambientcg.com/a/Rock035
+Color, OpenGL normal, roughness and ambient-occlusion maps from the 2K JPG
+packages, re-encoded. Used with triplanar projection on procedurally
+generated asteroids.
+
+The rocket "Nordstjärnan", launch complex LC-1, spacecraft, asteroid shapes,
+exhaust, smoke, plasma and lens-flare effects are generated procedurally by
+the game and are original designs.

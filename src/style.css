@@ -166,3 +166,62 @@ kbd { font: 10px "Avenir Next", sans-serif; border: 1px solid #e4e9dc45; border-
   .map-panel { width: min(470px, 90vw); }
   #large-map { max-height: 58vh; object-fit: contain; }
 }
+
+/* Launch and space flight */
+.fade-overlay { position: fixed; inset: 0; z-index: 15; pointer-events: none; opacity: 0; background: #000; }
+.launching .hud > :not(#launch-hud):not(#police-hud), .in-space .hud > :not(#space-hud) { display: none !important; }
+.launching .vignette, .in-space .vignette { opacity: .55; }
+.launching .grain, .in-space .grain { opacity: 0; }
+.launch-hud { position: absolute; left: 56px; bottom: 50px; text-align: left; text-shadow: 0 2px 14px #000c; }
+.launch-timer { font: 600 52px/1 "Avenir Next", sans-serif; letter-spacing: .08em; font-variant-numeric: tabular-nums; color: #fff; }
+.launch-status { margin-top: 10px; font-size: 13px; letter-spacing: .24em; text-transform: uppercase; color: #ffd796; }
+.launch-telemetry { margin-top: 12px; display: flex; gap: 26px; font-size: 12px; letter-spacing: .12em; color: #d9e6f2; font-variant-numeric: tabular-nums; }
+.launch-hint { margin: 14px 0 0; font-size: 10px; letter-spacing: .2em; text-transform: uppercase; color: #ffffff80; }
+.space-hud { position: absolute; inset: 0; color: #e8f0ff; text-shadow: 0 1px 8px #000a; }
+.space-hud .small-label { color: #9cc4ff; }
+.space-panel, .space-nav { position: absolute; top: 86px; padding: 16px 18px; background: linear-gradient(160deg, #0a1424cc, #050a14b8); border: 1px solid #8fb6ff33; border-radius: 6px; backdrop-filter: blur(10px); }
+.space-panel { left: 28px; width: 268px; }
+.space-panel h2 { margin: 6px 0 2px; font: 500 19px/1.25 "Avenir Next", sans-serif; }
+.space-panel p { margin: 0 0 12px; font-size: 11px; color: #a9bdd8; }
+.space-panel dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; margin: 0; font-size: 12px; }
+.space-panel dt { color: #8ea6c8; letter-spacing: .08em; text-transform: uppercase; font-size: 9px; align-self: center; }
+.space-panel dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+.space-nav { right: 28px; width: 250px; }
+.space-nav ol { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 4px; font-size: 12px; }
+.space-nav li { display: flex; align-items: center; gap: 9px; padding: 3px 4px; border-radius: 3px; }
+.space-nav li.active { background: #6fa3ff26; color: #fff; }
+.space-nav li span { flex: 1; }
+.space-nav li small { color: #8ea6c8; font-variant-numeric: tabular-nums; }
+.space-nav kbd, .space-controls kbd { background: #0b1a3366; border-color: #a7c6ff55; color: #e8f0ff; }
+.space-home { margin: 12px 0 0; font-size: 11px; color: #ffd796; }
+.space-controls { position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); display: flex; gap: 14px; white-space: nowrap; font-size: 10px; color: #b9cbe6; }
+.space-caption { position: absolute; left: 50%; bottom: 96px; transform: translateX(-50%); font-size: 15px; letter-spacing: .2em; text-transform: uppercase; text-align: center; color: #fff; white-space: nowrap; }
+.space-warning { position: absolute; top: 86px; left: 50%; transform: translateX(-50%); padding: 9px 16px; border: 1px solid #ff6b5a; border-radius: 4px; background: #3a0b0bcc; color: #ffb4a8; font-size: 12px; letter-spacing: .18em; animation: space-blink .6s steps(2) infinite; }
+@keyframes space-blink { 50% { opacity: .45; } }
+.space-marker { position: absolute; transform: translate(-50%, -50%); text-align: center; font-size: 10px; letter-spacing: .14em; text-transform: uppercase; color: #ffd796; }
+.space-marker i { display: block; width: 26px; height: 26px; margin: 0 auto 6px; border: 1px solid #ffd796; transform: rotate(45deg); }
+@media (max-width: 800px) {
+  .space-panel { width: 200px; left: 12px; }
+  .space-nav { display: none; }
+  .launch-timer { font-size: 40px; }
+}
+
+.hud-hidden .space-panel, .hud-hidden .space-nav, .hud-hidden .space-controls, .hud-hidden .topbar { opacity: 0; transition: opacity .4s; }
+.in-cockpit .space-panel { display: none; }
+.space-nav li.selected { outline: 1px solid #ffd796; color: #ffe6b5; }
+.space-crosshair { position: absolute; left: 50%; top: 50%; width: 34px; height: 34px; transform: translate(-50%, -50%); }
+.space-crosshair::before, .space-crosshair::after { content: ""; position: absolute; background: #ff9e88cc; }
+.space-crosshair::before { left: 16px; top: 0; width: 2px; height: 34px; clip-path: polygon(0 0, 100% 0, 100% 35%, 0 35%, 0 65%, 100% 65%, 100% 100%, 0 100%); }
+.space-crosshair::after { top: 16px; left: 0; height: 2px; width: 34px; clip-path: polygon(0 0, 35% 0, 35% 100%, 0 100%, 65% 0, 100% 0, 100% 100%, 65% 100%); }
+.space-crosshair i { position: absolute; left: 15px; top: 15px; width: 4px; height: 4px; border-radius: 50%; background: #ffc2b4; }
+.space-gear { position: absolute; left: 28px; bottom: 70px; padding: 12px 16px; background: #050a14b8; border: 1px solid #8fb6ff33; border-radius: 6px; backdrop-filter: blur(10px); }
+.space-gear ol { display: flex; gap: 3px; list-style: none; margin: 8px 0; padding: 0; }
+.space-gear li { width: 14px; height: 18px; background: #1b2c46; border-radius: 2px; }
+.space-gear li.on { background: linear-gradient(#7fb6ff, #3a6fd8); }
+.space-gear li.current { background: linear-gradient(#ffe1a0, #ff9c4a); }
+.space-gear strong { display: block; font-size: 13px; font-weight: 600; color: #fff; }
+.space-gear span { display: block; margin-top: 4px; font-size: 11px; color: #ffd796; }
+.space-target { position: absolute; transform: translate(-50%, -50%); text-align: center; white-space: nowrap; color: #9fd0ff; font-size: 11px; letter-spacing: .12em; text-transform: uppercase; }
+.space-target b { display: block; width: 30px; height: 30px; margin: 0 auto 6px; border: 2px solid #9fd0ff; border-radius: 50%; box-shadow: 0 0 12px #6fb4ff88; }
+.space-target small { display: block; margin-top: 3px; color: #ffd796; letter-spacing: .08em; }
+.space-target.edge b { border-radius: 0; border: 0; width: 0; height: 0; border-left: 12px solid transparent; border-right: 12px solid transparent; border-bottom: 20px solid #9fd0ff; transform: rotate(calc(var(--angle) + 90deg)); box-shadow: none; }

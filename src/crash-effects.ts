@@ -5,6 +5,8 @@ export type AircraftImpact = {
   position: THREE.Vector3;
   contact: THREE.Vector3;
   ground: boolean;
+  /** Relative size of fireball and scorch marks; aircraft use 1. */
+  scale?: number;
 };
 
 type Particle = {
@@ -12,7 +14,7 @@ type Particle = {
   velocity: THREE.Vector3;
   smoke: boolean;
 };
-type Burst = { group: THREE.Group; particles: Particle[]; light: THREE.PointLight; age: number };
+type Burst = { group: THREE.Group; particles: Particle[]; light: THREE.PointLight; age: number; scale: number };
 
 export class CrashEffects {
   readonly group = new THREE.Group();
@@ -84,10 +86,11 @@ export class CrashEffects {
 
   impact(impact: AircraftImpact, scene: THREE.Scene, excluded: THREE.Object3D[],
     groundHeight: (x: number, z: number) => number): void {
+    const scale = impact.scale ?? 1;
     const scar = new THREE.Group();
     scar.name = "Bestående brandskada";
     if (impact.ground) {
-      const geometry = new THREE.PlaneGeometry(17, 17, 16, 16);
+      const geometry = new THREE.PlaneGeometry(17 * scale, 17 * scale, 16, 16);
       geometry.rotateX(-Math.PI / 2);
       const points = geometry.attributes.position;
       for (let i = 0; i < points.count; i++) {
@@ -97,7 +100,7 @@ export class CrashEffects {
       geometry.computeVertexNormals();
       scar.add(new THREE.Mesh(geometry, this.scarMaterial()));
     } else {
-      this.surfaceDamage(scar, impact.contact, scene, [...excluded, this.group]);
+      this.surfaceDamage(scar, impact.contact, scene, [...excluded, this.group], scale);
     }
     this.group.add(scar);
     this.scars.push(scar);
@@ -118,17 +121,18 @@ export class CrashEffects {
       });
       const sprite = new THREE.Sprite(mat);
       const angle = i * 2.399;
-      const velocity = new THREE.Vector3(Math.cos(angle) * (2 + i % 4), 2 + i % 5, Math.sin(angle) * (2 + i % 4));
+      const velocity = new THREE.Vector3(Math.cos(angle) * (2 + i % 4), 2 + i % 5, Math.sin(angle) * (2 + i % 4))
+        .multiplyScalar(scale);
       sprite.position.copy(velocity).multiplyScalar(0.18);
-      sprite.scale.setScalar(smoke ? 3 : 5);
+      sprite.scale.setScalar((smoke ? 3 : 5) * scale);
       sprite.renderOrder = smoke ? 2 : 1;
       group.add(sprite);
       particles.push({ sprite, velocity, smoke });
     }
-    const light = new THREE.PointLight(0xff8c24, 800, 65, 2);
+    const light = new THREE.PointLight(0xff8c24, 800 * scale * scale, 65 * scale, 2);
     group.add(light);
     this.group.add(group);
-    this.bursts.push({ group, particles, light, age: 0 });
+    this.bursts.push({ group, particles, light, age: 0, scale });
   }
 
   private scarMaterial(cracks = false): THREE.MeshBasicMaterial {
@@ -138,7 +142,7 @@ export class CrashEffects {
     });
   }
 
-  private surfaceDamage(scar: THREE.Group, point: THREE.Vector3, scene: THREE.Scene, excluded: THREE.Object3D[]): void {
+  private surfaceDamage(scar: THREE.Group, point: THREE.Vector3, scene: THREE.Scene, excluded: THREE.Object3D[], scale: number): void {
     scene.updateMatrixWorld(true);
     const meshes: THREE.Mesh[] = [];
     const collect = (object: THREE.Object3D): void => {
@@ -174,15 +178,15 @@ export class CrashEffects {
     }
     const normal = closest.face.normal.clone().applyMatrix3(new THREE.Matrix3().getNormalMatrix(mesh.matrixWorld)).normalize();
     const orientation = new THREE.Euler().setFromQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), normal));
-    const geometry = new DecalGeometry(mesh, closest.point, orientation, new THREE.Vector3(12, 12, 3));
+    const geometry = new DecalGeometry(mesh, closest.point, orientation, new THREE.Vector3(12 * scale, 12 * scale, 3));
     projectionMaterial.dispose();
     scar.add(new THREE.Mesh(geometry, this.scarMaterial(true)));
     for (let i = 0; i < 14; i++) {
-      const debris = new THREE.Mesh(new THREE.TetrahedronGeometry(0.15 + i % 4 * 0.12),
+      const debris = new THREE.Mesh(new THREE.TetrahedronGeometry((0.15 + i % 4 * 0.12) * scale),
         new THREE.MeshStandardMaterial({ color: i % 2 ? 0x51483e : 0x292622, roughness: 1 }));
       debris.position.copy(closest.point).addScaledVector(normal, 0.2 + i % 3 * 0.15);
       const offset = new THREE.Vector3(Math.cos(i * 2.399), Math.sin(i * 2.399), 0)
-        .applyEuler(orientation).multiplyScalar(0.6 + i % 5 * 0.45);
+        .applyEuler(orientation).multiplyScalar((0.6 + i % 5 * 0.45) * scale);
       debris.position.add(offset);
       debris.rotation.set(i, i * 0.7, i * 0.3);
       scar.add(debris);
@@ -197,13 +201,13 @@ export class CrashEffects {
       for (const { sprite, velocity, smoke } of burst.particles) {
         sprite.position.addScaledVector(velocity, dt * (smoke ? 0.5 : Math.exp(-burst.age)));
         if (smoke) sprite.position.y += dt * 1.2;
-        sprite.scale.setScalar(smoke ? 4 + burst.age * 1.3 : 5 + Math.min(burst.age, 1.5) * 4);
+        sprite.scale.setScalar((smoke ? 4 + burst.age * 1.3 : 5 + Math.min(burst.age, 1.5) * 4) * burst.scale);
         sprite.material.rotation += dt * (smoke ? 0.12 : 0.3);
         sprite.material.opacity = smoke
           ? Math.min(0.85, burst.age * 0.5) * Math.max(0, 1 - burst.age / 12)
           : Math.max(0, 1 - burst.age / 3);
       }
-      burst.light.intensity = 800 * Math.max(0, 1 - burst.age / 2.5);
+      burst.light.intensity = 800 * burst.scale * burst.scale * Math.max(0, 1 - burst.age / 2.5);
       if (burst.age >= 12) {
         this.dispose(burst.group);
         this.bursts.splice(i, 1);

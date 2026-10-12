@@ -14,6 +14,10 @@ import { TREEHOUSE } from "../src/treehouse";
 import { Archery, ARROW_COOLDOWN, ARROW_SPEED } from "../src/archery";
 import { Survival, Werewolves, DAY_SECONDS } from "../src/survival";
 import { PLAYER_RADIUS, segmentSphereHit } from "../src/combat";
+import { Spaceport, PAD, SPACEPORT_BOUNDS } from "../src/spaceport";
+import { createAsteroidShape, AsteroidField, scatterRocks } from "../src/asteroids";
+import { AU, BODY_DATA, earthOrientation, hazardRadius, lonLat } from "../src/space-bodies";
+import { GEARS, bezier, gravityLimit, jumpPath, segmentSphere, speedLimit, travelTime } from "../src/space-nav";
 
 const results = document.querySelector<HTMLPreElement>("#results")!;
 const lines: string[] = [];
@@ -40,6 +44,7 @@ async function run(): Promise<void> {
   const city = new City(await loadCityAssets());
   const aviation = new Aviation();
   const traffic = new TrafficPolice(city);
+  const spaceport = new Spaceport();
 
   test("Treehouse approach, ladders, treasure, doorway and roof form a playable round trip", () => {
     const house = world.treehouse;
@@ -518,6 +523,169 @@ async function run(): Promise<void> {
     assert(world.houses.length === 15, "Forest houses changed");
     assert(city.venues.length > 0 && city.vehicles.length > 0, "Existing city interactions missing");
     assert(world.houses.every(h => world.nearHouse(h.entrance.x, h.entrance.z)?.id === h.id), "House entrances inaccessible");
+  });
+
+  test("Spaceport walkway reaches the tower elevator without walls, and the pad stays clear of the runway", () => {
+    const door = spaceport.interactionPoint;
+    // Footpath from the airport apron, up the yellow walkway, then along the apron to the elevator door.
+    const route = [new THREE.Vector3(726, 0, 660), new THREE.Vector3(726, 0, 818), new THREE.Vector3(door.x + 3, 0, 818),
+      new THREE.Vector3(door.x + 3, 0, door.z - 2), door.clone().setZ(door.z - 0.6)];
+    for (let i = 1; i < route.length; i++) {
+      for (let t = 0; t <= 1; t += 0.01) {
+        const p = route[i - 1].clone().lerp(route[i], t);
+        assert(!aviation.blocked(p.x, p.z, PLAYER_RADIUS) && !spaceport.blocked(p.x, p.z, PLAYER_RADIUS),
+          `Spaceport walk blocked at ${p.x.toFixed(1)}, ${p.z.toFixed(1)}`);
+      }
+    }
+    assert(spaceport.nearElevator(door.clone().setZ(door.z - 0.6)), "Elevator interaction unreachable");
+    assert(spaceport.contains(door.x, door.z), "Elevator is outside the spaceport area");
+    assert(SPACEPORT_BOUNDS.maxX < 778, "Spaceport overlaps the runway");
+    assert(spaceport.blocked(PAD.x + 5.6, PAD.z + 5.6), "Launch table legs are not solid");
+    assert(spaceport.flightBlocked(PAD.x, 50, PAD.z, 1), "Aircraft can fly through the rocket on the pad");
+    assert(!spaceport.flightBlocked(790, 50, 760, 6), "Spaceport blocks the runway approach");
+  });
+
+  test("Launch counts down, holds for loading, lifts off and hands over to space exactly once", () => {
+    spaceport.resetPad();
+    spaceport.board();
+    spaceport.holdForAssets = true;
+    let ignitedEarly = false;
+    for (let i = 0; i < 600; i++) {
+      spaceport.update(1 / 60, 1);
+      ignitedEarly ||= spaceport.countdown > 3.5 && spaceport.rocketWorldPosition.y > 7.01;
+    }
+    assert(spaceport.phase === "countdown" && Math.abs(spaceport.countdown - 10) < 0.05, "Countdown did not hold at T-10 while loading");
+    spaceport.holdForAssets = false;
+    let handovers = 0;
+    let previous = spaceport.altitude;
+    for (let i = 0; i < 60 * 40; i++) {
+      if (spaceport.update(1 / 60, 1)) handovers++;
+      assert(spaceport.altitude >= previous - 1e-6, "Rocket sank during the ascent");
+      previous = spaceport.altitude;
+    }
+    assert(!ignitedEarly, "Rocket moved before ignition");
+    const phase: string = spaceport.phase;
+    assert(handovers === 1 && phase === "away", "Ascent did not hand over to space exactly once");
+    assert(previous > 2500, `Ascent too low before the space scene: ${previous.toFixed(0)} m`);
+    spaceport.resetPad();
+    const resetPhase: string = spaceport.phase;
+    assert(resetPhase === "idle" && spaceport.altitude === 0, "Pad reset failed");
+  });
+
+  test("Asteroid collisions follow the real cratered surface, not a bounding sphere", () => {
+    const shape = createAsteroidShape(7, 12, 4);
+    const rocks = scatterRocks(3, 1, new THREE.Vector3(), new THREE.Vector3(0.001, 0.001, 0.001), 0.4, 0.4, 1);
+    assert(rocks.length === 1, "Rock scatter failed");
+    const field = new AsteroidField([shape], [new THREE.MeshBasicMaterial()], rocks, 2);
+    field.update(0, new THREE.Vector3(10, 0, 0));
+    const rock = rocks[0];
+    let insideMiss = 0;
+    for (let i = 0; i < 200; i++) {
+      const dir = new THREE.Vector3(Math.sin(i * 2.4) * Math.cos(i * 0.7), Math.cos(i * 2.4), Math.sin(i * 0.7)).normalize();
+      const local = dir.clone().applyQuaternion(rock.quaternion.clone().invert());
+      const surface = shape.surface(local) * rock.scale;
+      assert(!field.collide(rock.position.clone().addScaledVector(dir, surface + 0.02), 0.01), "Collision reported in open space above the surface");
+      if (!field.collide(rock.position.clone().addScaledVector(dir, surface - 0.02), 0.01)) insideMiss++;
+    }
+    assert(insideMiss === 0, `${insideMiss} points inside the asteroid were not detected`);
+    assert(field.collide(rock.position, 0.01) === rock, "Asteroid core is not solid");
+  });
+
+  test("Autopilot routes between every pair of stops never pass through a planet, the Moon or the Sun", () => {
+    const bodies = Object.values(BODY_DATA);
+    const spheres = bodies.map(b => ({ position: b.position, radius: hazardRadius(b) }));
+    const stops = bodies.filter(b => b.id !== "sun").map(b => ({ body: b, point: b.position.clone().add(new THREE.Vector3(0.3, 0.8, 0.5).normalize().multiplyScalar(b.radius + 400)) }));
+    for (const from of stops) for (const to of stops) {
+      if (from === to) continue;
+      const route = jumpPath(from.point, { position: from.body.position, radius: from.body.radius }, to.point,
+        { position: to.body.position, radius: to.body.radius }, spheres);
+      const p = new THREE.Vector3();
+      for (let i = 1; i < 400; i++) {
+        bezier(route, i / 400, p);
+        for (const b of bodies) {
+          assert(p.distanceTo(b.position) > hazardRadius(b), `${from.body.id} → ${to.body.id} passes through ${b.id}`);
+        }
+      }
+      assert(route[0].equals(from.point) && route[3].equals(to.point), "Route does not start and end at the orbits");
+    }
+  });
+
+  test("Free-flight gears reach light speed and beyond, while the approach limiter always stops above the surface", () => {
+    assert(GEARS[0].speed <= 0.1 && GEARS[GEARS.length - 1].speed >= 299_792 * 100, "Gear range too narrow");
+    assert(GEARS.every((g, i) => i === 0 || g.speed > GEARS[i - 1].speed), "Gears are not increasing");
+    for (const body of Object.values(BODY_DATA)) {
+      // Dive straight down at the top gear with Shift, at 20 fps (the 0.05 s step clamp) and 144 fps.
+      for (const fps of [20, 144]) {
+        let clearance = body.radius * 30;
+        let seconds = 0, impact = Infinity;
+        const dt = 1 / fps;
+        while (clearance > 0 && seconds < 120) {
+          const speed = Math.min(GEARS[GEARS.length - 1].speed * 10, speedLimit(clearance));
+          assert(speed * dt < clearance, `${body.id} reaches the surface at ${fps} fps`);
+          if (clearance > 500 && clearance - speed * dt <= 500) impact = seconds;
+          clearance -= speed * dt;
+          seconds += dt;
+        }
+        assert(clearance > 0 && clearance < 100, `${body.id} approach did not settle just above the surface`);
+        assert(impact < 25, `${body.id}: reaching 500 km above the surface took ${impact.toFixed(1)} s at ${fps} fps`);
+      }
+    }
+  });
+
+  test("Gravity brake: top gear from the Moon reaches Earth in seconds without a single-frame overshoot", () => {
+    const moon = BODY_DATA.moon, earth = BODY_DATA.earth;
+    const direction = earth.position.clone().sub(moon.position).normalize();
+    const p = moon.position.clone().addScaledVector(direction, hazardRadius(moon) + 300);
+    const top = GEARS[GEARS.length - 1].speed * 10;
+    let seconds = 0;
+    const dt = 1 / 20;
+    while (p.distanceTo(earth.position) - hazardRadius(earth) > 1000 && seconds < 60) {
+      const clearance = Math.min(p.distanceTo(moon.position) - hazardRadius(moon), p.distanceTo(earth.position) - hazardRadius(earth));
+      const toEarth = p.distanceTo(earth.position) - hazardRadius(earth);
+      const speed = Math.min(top, gravityLimit(clearance), speedLimit(toEarth));
+      assert(speed * dt < Math.max(toEarth, 1), "One frame jumps past Earth");
+      p.addScaledVector(direction, speed * dt);
+      seconds += dt;
+    }
+    assert(seconds < 20, `Moon → Earth by hand took ${seconds.toFixed(1)} s`);
+    const estimate = travelTime(300, moon.position.distanceTo(earth.position) - hazardRadius(moon) - hazardRadius(earth) - 300, top);
+    assert(Math.abs(estimate - seconds) < Math.max(3, seconds * 0.4), `ETA ${estimate.toFixed(1)} s far from flight time ${seconds.toFixed(1)} s`);
+    assert(gravityLimit(AU) * 1 > GEARS[GEARS.length - 1].speed, "Top gear never opens up between planets");
+  });
+
+  test("Swept sphere test catches a 1 000 c step that jumps clean over a planet", () => {
+    const earth = BODY_DATA.earth;
+    const a = earth.position.clone().add(new THREE.Vector3(0, 0, -3e8));
+    const b = earth.position.clone().add(new THREE.Vector3(0, 0, 3e8));
+    const t = segmentSphere(a, b, earth.position, earth.radius);
+    assert(t !== null && Math.abs(t - (3e8 - earth.radius) / 6e8) < 1e-9, "Fast step tunnelled through Earth");
+    assert(segmentSphere(a, b.clone().add(new THREE.Vector3(earth.radius * 3, 0, 0)), earth.position, earth.radius) === null, "Miss reported as a hit");
+  });
+
+  test("Lasers chip asteroids and split large ones into fragments that can be shot again", () => {
+    const shape = createAsteroidShape(9, 8, 3);
+    const rock = { position: new THREE.Vector3(0, 0, 1), scale: 0.2, axis: new THREE.Vector3(0, 1, 0), spin: 0, angle: 0, shape: 0, quaternion: new THREE.Quaternion(), health: 2 };
+    const field = new AsteroidField([shape], [new THREE.MeshBasicMaterial()], [rock], 2);
+    field.update(0, new THREE.Vector3());
+    const hit = field.raycast(new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, 0.95), 0.0006);
+    assert(hit?.rock === rock && hit.point.z < 1 && hit.point.z > 0.6, "Laser segment did not hit the near face of the rock");
+    assert(field.raycast(new THREE.Vector3(1, 0, 0), new THREE.Vector3(1, 0, 2), 0.0006) === null, "Laser hit a rock it passed beside");
+    assert(field.add({ ...rock, position: new THREE.Vector3(0, 0, 3), velocity: new THREE.Vector3(0, 0, 1), quaternion: new THREE.Quaternion() }), "Fragment could not be added");
+    field.update(0.5, new THREE.Vector3());
+    assert(Math.abs(field.rocks[1].position.z - 3.5) < 1e-9, "Fragments do not drift");
+    field.remove(rock);
+    assert(field.rocks.length === 1, "Destroyed rock not removed");
+  });
+
+  test("Earth orientation puts the chosen subsolar point under the Sun with north up", () => {
+    const sun = new THREE.Vector3(0, 0, -1);
+    const q = earthOrientation(sun, -45, 15);
+    const subsolar = lonLat(-45, 15).applyQuaternion(q);
+    assert(Math.acos(THREE.MathUtils.clamp(subsolar.dot(sun), -1, 1)) < 1e-6, "Subsolar point is not facing the Sun");
+    const north = new THREE.Vector3(0, 1, 0).applyQuaternion(q);
+    assert(Math.abs(Math.asin(north.dot(sun)) - THREE.MathUtils.degToRad(15)) < 1e-6, "Axial tilt toward the Sun is wrong");
+    assert(north.y > 0.9, "Earth's north pole is not up");
+    assert(AU > 1.49e8 && AU < 1.5e8, "Astronomical unit has the wrong scale");
   });
 
   test("Aircraft boards, takes off and can switch views without changing flight state", () => {

@@ -9,11 +9,15 @@ import { VenueInterior } from "./venue-interior";
 import { Survival, Werewolves } from "./survival";
 import { PLAYER_RADIUS } from "./combat";
 import { City, CITY_SPAWN } from "./city";
-import type { CityVenue } from "./city";
+import type { CityVenue, Vehicle, VehicleCrash } from "./city";
 import { FOREST_CITY_EXIT, LANDMARKS, LAKE, SPAWN, WORLD_SIZE } from "./world-types";
 import { CITY_ORIGIN, CITY_ROTATION, FOREST_JOIN, cityToWorld, worldToCity, onAirportApproach } from "./geography";
 import { Aviation, AIRPORT_BOUNDS, FLIGHT_VIEW_DISTANCE, flightFogDensity } from "./aviation";
 import { CrashEffects } from "./crash-effects";
+import { Spaceport, ASCENT_SECONDS, PAD } from "./spaceport";
+import { Space } from "./space";
+import { loadSpaceAssets } from "./space-assets";
+import { GEARS as GEAR_LIST } from "./space-nav";
 import { TrafficPolice, SPEED_LIMIT_KMH, JAIL_SECONDS, ESCAPE_SECONDS } from "./police";
 import { Jail } from "./jail";
 import { Archery, makeBow } from "./archery";
@@ -72,6 +76,18 @@ element("app").innerHTML = `
     <div id="vehicle-hud" class="vehicle-hud" hidden><span id="vehicle-name"></span><strong id="vehicle-speed">0 <small>km/h</small></strong><p>Hastighetsgräns ${SPEED_LIMIT_KMH} km/h · Stanna vid rött<br>↑ / W Gas · ↓ / S Bromsa / backa<br>← → / A D Styr · Space Handbroms · E Kliv ur</p></div>
     <div id="police-hud" class="police-hud" role="status" hidden><strong id="police-title"></strong><p id="police-detail"></p></div>
     <div id="flight-hud" class="vehicle-hud" hidden><span id="flight-name">Grönved Air</span><strong id="flight-speed"></strong><p id="flight-altitude"></p><p>W Gas · S Bromsa · ← → Sväng<br>↓ Stig · ↑ Sjunk · Flygtak 10 000 m<br>V Cockpit / följkamera · E Kliv ur när du parkerat</p></div>
+    <div id="launch-hud" class="launch-hud" hidden><div id="launch-timer" class="launch-timer"></div><div id="launch-status" class="launch-status"></div><div class="launch-telemetry"><span id="launch-altitude"></span><span id="launch-speed"></span></div><p class="launch-hint">Enter · Hoppa direkt till rymden</p></div>
+    <div id="space-hud" class="space-hud" hidden>
+      <div class="space-panel"><div class="small-label">Nordstjärnan · telemetri</div><h2 id="space-title"></h2><p id="space-detail"></p><dl id="space-stats"></dl></div>
+      <div class="space-nav"><div class="small-label">Mål · siffra väljer kurs, samma siffra igen = autopilot</div><ol id="space-destinations"></ol><p class="space-home"><kbd>J</kbd> Autopilot till valt mål · <kbd>B</kbd> Omloppsbana här<br><kbd>H</kbd> Återinträde och hem till Grönved</p></div>
+      <div id="space-crosshair" class="space-crosshair" hidden><i></i></div>
+      <div id="space-gear" class="space-gear" hidden><div class="small-label">Fartväxel <kbd>Q</kbd> / <kbd>E</kbd></div><ol id="space-gears"></ol><strong id="space-gear-name"></strong><span id="space-score"></span></div>
+      <div id="space-target" class="space-target" hidden><b></b><span id="space-target-label"></span><small id="space-target-eta"></small></div>
+      <div id="space-caption" class="space-caption"></div>
+      <div id="space-warning" class="space-warning" hidden></div>
+      <div id="space-marker" class="space-marker" hidden><i></i><span id="space-marker-label"></span></div>
+      <div class="space-controls"><span><kbd>W</kbd> / <kbd>S</kbd> Motor fram / bak</span><span><kbd>↑</kbd><kbd>↓</kbd> Tippa</span><span><kbd>←</kbd><kbd>→</kbd> Gira</span><span><kbd>A</kbd> / <kbd>D</kbd> Rolla</span><span><kbd>Shift</kbd> Boost ×10</span><span><kbd>X</kbd> Broms</span><span><kbd>Space</kbd> / <kbd>F</kbd> Laser</span><span><kbd>V</kbd> Kapsel / yttre vy</span><span><kbd>T</kbd> Tid</span><span><kbd>U</kbd> Dölj panel</span><span>Dra / scrolla · Kamera</span></div>
+    </div>
     <div class="quest"><div class="small-label">Din första vandring</div><div id="quest-title" class="quest-title">Lär känna Grönved</div><p id="quest-text">Besök skogens ${LANDMARKS.length} byar <span id="visited-count">0 / ${LANDMARKS.length}</span></p><div id="quest-progress" class="quest-progress">${LANDMARKS.map(() => "<span></span>").join("")}</div></div>
     <div class="minimap-wrap"><button id="open-map" class="minimap-button" title="Öppna kartan (M)" aria-label="Öppna kartan"><canvas id="minimap" width="300" height="300"></canvas><span class="map-n">N</span></button><div class="map-hint"><kbd>M</kbd> Visa kartan</div></div>
     <div class="survival-hud"><div><span id="health-label">Hälsa 100 / 100</span><progress id="health" max="100" value="100" aria-label="Hälsa"></progress></div><p id="safety-status">Utforska i dagsljuset.</p><button id="open-inventory"><kbd>B</kbd> Ryggsäck</button><span id="weapon-status">Svärdet ligger i ryggsäcken</span></div>
@@ -84,9 +100,10 @@ element("app").innerHTML = `
     <div class="panel">
       <button id="close-help" class="icon-button close" aria-label="Stäng">${icon("close")}</button>
       <div class="small-label">Ta det i din egen takt</div><h2 id="help-title">Skog och storstad.</h2>
-      <p>Följ stigen söderut från Björkby. Träden glesnar och Norrhamns silhuett växer fram: skog och stad är samma sammanhängande landskap. Följ stigen tillbaka när du vill. Alla fyra byar finns kvar. C är valfri snabbresa. Utforska stadsdelar, caféer och restauranger. Vid bussterminalen finns taxi, sportbil, buss, polisbil, skåpbil och BMW Sport. BMW:n är snabbast: 400 km/h, kraftiga bromsar och stabilare styrning i hög fart. Gå nära ett stillastående fordon och tryck E. Kör med WASD eller pilarna, bromsa med Space och stanna innan du kliver ur med E.</p>
+      <p>Följ stigen söderut från Björkby. Träden glesnar och Norrhamns silhuett växer fram: skog och stad är samma sammanhängande landskap. Följ stigen tillbaka när du vill. Alla fyra byar finns kvar. C är valfri snabbresa. Utforska stadsdelar, caféer och restauranger. Vid bussterminalen finns taxi, sportbil, buss, polisbil, skåpbil och BMW Sport. BMW:n är snabbast: 400 km/h, kraftiga bromsar, skarp styrning och greppstark väghållning. Gå nära ett stillastående fordon och tryck E. Kör med WASD eller pilarna, bromsa med Space och stanna innan du kliver ur med E. Kör du in i något i 70 km/h eller mer exploderar fordonet och du börjar om vid bussterminalen; fordonet ställs tillbaka på sin vanliga plats. I lägre fart stannar fordonet bara.</p>
       <p>I staden gäller ${SPEED_LIMIT_KMH} km/h. Fortkörning och att köra över stopplinjen vid rött startar en polisjakt. Patrullerna följer gatorna och kan fånga dig när de kommer nära och du står stilla eller kör långsamt. Håll avstånd från alla patruller i ${ESCAPE_SECONDS} sekunder för att komma undan. Om du blir fångad hamnar du i häktet i ${JAIL_SECONDS} sekunder och släpps sedan automatiskt ut vid terminalens polisstation. Snabbresa är avstängd under jakten och i häktet; öppna paneler pausar även jakten och fängelsetiden. Polisbilar i tjänst går inte att låna.</p>
       <p>Flygplatsen ligger på stadens östra sida och är markerad på världskartan (M). Gå till planet och tryck E. W ger gas, S bromsar, vänster / höger pil svänger. Dra upp nosen med pil ned (↓) för att stiga, och sänk nosen med pil upp (↑) för att sjunka. Accelerera längs banan för att lyfta. Du kan flyga upp till 10 000 meters höjd över både staden och skogen. V växlar cockpit / följkamera. Återvänd längs banan och håll S + ↑ för att landa. E låter dig kliva ur först när planet står stilla på marken. Paneler och paus stoppar även flygningen.</p>
+      <p>Grönved Rymdcenter (startplatta LC-1) ligger inne på flygplatsen, väster om landningsbanan. Följ den gula gångvägen från flygplatsens förplats till hissen vid tornets fot och tryck E för att gå ombord på bärraketen Nordstjärnan. Enter hoppar över uppskjutningen. Efter nedräkning, tändning och lyftning tar raketen dig upp i omloppsbana. I rymden kör du själv: W ger gas och lämnar omloppsbanan, S backar, pilarna tippar och girar, A / D rollar, X bromsar. Q / E byter fartväxel, från 100 m/s upp till 1 000 gånger ljusets hastighet, och Shift ger tio gånger mer. Siffertangenterna 1–0 väljer mål (Jorden, Månen, Mars, Venus, Merkurius, asteroidbältet, Jupiter, Saturnus, Uranus, Neptunus): en markör visar riktning, avstånd och beräknad ankomsttid. Sikta på markören och håll W; när du är framme går farkosten själv in i omloppsbana. Samma siffra igen eller J kör autopilot dit. Nära planeter och månar begränsar en gravitationsbroms farten, så att du aldrig flyger förbi eller in i dem i hög fart; långt ute mellan planeterna öppnas de högsta växlarna. B lägger dig i omloppsbana där du är. Space eller F skjuter laser mot asteroider, meteoroider och satelliter. Stora stenar spricker i mindre bitar. T växlar tidsacceleration i omloppsbana. V tar dig in i kapseln: du sitter på förarplatsen bredvid två besättningsmedlemmar, ser ut genom vindrutan och har flygdatorn framför dig. Dra med musen för att vrida på huvudet; V igen ger yttre vy. Undvik asteroiderna: en kollision förstör farkosten och du börjar om vid rymdcentret. H (eller att dyka ner mot jordens atmosfär) startar återinträdet hem.</p>
       <p>Utforska skogens fyra byar. Dagen varar i tre minuter och natten i en och en halv. När varulvarna kommer kan du springa undan, försvara dig eller gå in i ett hus. Inomhus är du trygg och återhämtar hälsa. Tryck E vid sängen för att lägga dig och sova till nästa morgon. Efter en kort sovanimation kliver du upp automatiskt med full hälsa. Spelet pausas när en panel är öppen.</p>
       <p>Följ stigen söderut från starten och sväng vänster mot äppelträdet (markerat på kartan). E vid plankstegen klättrar upp till trädkojan. Öppna skattkistan med E: där finns ett svärd, en pilbåge och ett fiskespö. Stegen på verandans högra sida leder till taket. Välj pilbågen med 2, sikta genom att dra höger musknapp, zooma med scrollhjulet och skjut med vänsterklick eller F. Q växlar siktet. Pilarna är obegränsade. Tjuvar stryker runt kojan efter att skatten hittats; varulvar kommer på natten. En pilträff får dem att försvinna i ett magiskt skimmer. 3 håller fiskespöet; fiske är ännu inte spelbart.</p>
       <div class="control-list">
@@ -100,12 +117,15 @@ element("app").innerHTML = `
         <div class="control-row"><span>Kör / styr · handbroms</span><span>WASD / pilar · Space</span></div>
         <div class="control-row"><span>Flyg: gas / broms · sväng</span><span>W / S · ← / →</span></div>
         <div class="control-row"><span>Flyg: stig / sjunk · byt vy</span><span>↓ / ↑ · V</span></div>
+        <div class="control-row"><span>Rymd: motor · tippa / gira · rolla</span><span>W / S · pilar · A / D</span></div>
+        <div class="control-row"><span>Rymd: mål · autopilot · omloppsbana · hem</span><span>1–0 · J · B · H</span></div>
+        <div class="control-row"><span>Rymd: fartväxel · laser · tid · kapselvy</span><span>Q / E · Space · T · V</span></div>
         <div class="control-row"><span>Ryggsäck / utrusta svärdet</span><span class="keys"><kbd>B</kbd><kbd>1</kbd></span></div>
         <div class="control-row"><span>Hugg med utrustat svärd</span><kbd>F</kbd></div>
         <div class="control-row"><span>Karta / paus</span><span class="keys"><kbd>M</kbd><kbd>Esc</kbd></span></div>
       </div>
       <p>Vid den gröna skogsporten intill terminalen: fortsätt gå norrut längs stigen för att återvända till skogen. E låter dig prata med stadsbor. Stadens caféer, restauranger och butiker har öppna dörrar: tryck E vid skylten ÖPPET för att gå in. Utforska inredningen och prata med personal och gäster. E vid utgångsmattan tar dig tillbaka till samma gata. Gå ut innan du snabbreser.</p>
-      <p>Spelresurser: ambientCG och Poly Haven (CC0), Car Concept av Eric Chadwick / DGG (CC BY 4.0). <a href="./assets/city/CREDITS.txt" target="_blank" rel="noopener">Källor och licenser</a>.</p>
+      <p>Spelresurser: ambientCG och Poly Haven (CC0), Car Concept av Eric Chadwick / DGG (CC BY 4.0), planet- och stjärntexturer från Solar System Scope (CC BY 4.0, baserade på NASA-data). <a href="./assets/city/CREDITS.txt" target="_blank" rel="noopener">Källor och licenser</a> · <a href="./assets/space/CREDITS.txt" target="_blank" rel="noopener">Rymdens källor</a>.</p>
       <button id="resume" class="primary"><span>Tillbaka till äventyret</span>${icon("arrow")}</button>
     </div>
   </section>
@@ -133,6 +153,7 @@ element("app").innerHTML = `
     <button id="close-dialogue">Fortsätt vandra <kbd>E</kbd></button>
   </section>
   <div id="toast" class="toast" role="status" hidden></div>
+  <div id="fade" class="fade-overlay"></div>
 `;
 
 const canvas = element<HTMLCanvasElement>("scene");
@@ -276,6 +297,8 @@ async function init(): Promise<void> {
   let jailed = false;
   let jailRemaining = 0;
   let releaseWaiting = false;
+  const CAR_CRASH_SECONDS = 4;
+  let carCrash: { vehicle: Vehicle; remaining: number; waiting: boolean } | null = null;
   const environmentGenerator = new THREE.PMREMGenerator(renderer);
   city.scene.environment = environmentGenerator.fromEquirectangular(cityAssets.environment).texture;
   cityAssets.environment.dispose();
@@ -286,6 +309,12 @@ async function init(): Promise<void> {
   scene.add(city.scene);
   city.scene.updateMatrixWorld(true);
   const aviation = new Aviation();
+  const spaceport = new Spaceport();
+  scene.add(spaceport.group);
+  let space: Space | null = null;
+  let spaceLoading: Promise<void> | null = null;
+  let spaceActive = false;
+  const launching = (): boolean => spaceport.phase === "countdown" || spaceport.phase === "ascent";
   const crashEffects = new CrashEffects();
   scene.add(crashEffects.group);
   scene.add(aviation.group);
@@ -403,7 +432,7 @@ async function init(): Promise<void> {
   const globalHeight = (x: number, z: number) =>
     Math.abs(x) <= WORLD_SIZE / 2 && Math.abs(z) <= WORLD_SIZE / 2 ? world.heightAt(x, z) : 0;
   const globalBlocked = (x: number, z: number, radius = PLAYER_RADIUS): boolean => {
-    if (inAirport(x, z)) return aviation.blocked(x, z, radius);
+    if (inAirport(x, z)) return aviation.blocked(x, z, radius) || spaceport.blocked(x, z, radius);
     if (onAirportApproach(x, z, radius)) return false;
     if (z < FOREST_JOIN) return world.blocked(x, z, radius);
     const p = worldToCity(new THREE.Vector3(x, 0, z));
@@ -411,7 +440,7 @@ async function init(): Promise<void> {
       || city.pedestrianBlocked(p.x, p.z, radius);
   };
   const globalFlightBlocked = (x: number, y: number, z: number, radius: number): boolean => {
-    if (aviation.flightBlocked(x, y, z, radius) || world.flightBlocked(x, y, z, radius)) return true;
+    if (aviation.flightBlocked(x, y, z, radius) || world.flightBlocked(x, y, z, radius) || spaceport.flightBlocked(x, y, z, radius)) return true;
     const p = worldToCity(new THREE.Vector3(x, y, z));
     return city.flightBlocked(p.x, p.y, p.z, radius);
   };
@@ -435,6 +464,8 @@ async function init(): Promise<void> {
   const nightHorizon = new THREE.Color(0x1b2948);
   const dayFog = new THREE.Color(0xb5c6ba);
   const nightFog = new THREE.Color(0x111d33);
+  const spaceZenith = new THREE.Color(0x01030a);
+  const spaceHorizon = new THREE.Color(0x3d6fb3);
 
   function equipSword(): void {
     if (inCity || aviation.active) { toast("Svärdet vilar i staden och under flygningen."); return; }
@@ -583,6 +614,8 @@ async function init(): Promise<void> {
     if (!started || overlay) return;
     if (treehouse.elevated || treehouse.climbing) { toast("Klättra ner från äppelträdet innan du snabbreser."); return; }
     if (jailed) { toast("Du kan resa igen när fängelsetiden är slut."); return; }
+    if (carCrash) { toast("Vänta tills du är tillbaka vid bussterminalen."); return; }
+    if (launching() || spaceActive) { toast("Snabbresa fungerar inte under rymdfärden."); return; }
     if (police.wanted) { toast("Snabbresa är avstängd under polisjakten. Kom undan polisen först."); return; }
     if (indoors() || sleep) { toast("Gå ut ur byggnaden innan du reser."); return; }
     if (city.activeVehicle || aviation.active) { toast("Stanna och kliv ur fordonet med E innan du reser."); return; }
@@ -611,6 +644,145 @@ async function init(): Promise<void> {
   }
   element("travel").addEventListener("click", () => travel());
 
+  function ensureSpace(): Promise<void> {
+    spaceLoading ??= loadSpaceAssets(anisotropy).then(async assets => {
+      const created = new Space(renderer, assets);
+      await created.prepare(renderer);
+      space = created;
+    }).catch(error => {
+      spaceLoading = null;
+      console.error("Kunde inte ladda rymden:", error);
+      throw error;
+    });
+    return spaceLoading;
+  }
+
+  function boardRocket(): void {
+    spaceport.board();
+    spaceport.holdForAssets = !space;
+    resetMovement();
+    player.group.visible = false;
+    document.body.classList.add("launching");
+    toast("Hissen tar dig upp till besättningskapseln. Spänn fast dig – nedräkningen har börjat!");
+    ensureSpace().then(() => { spaceport.holdForAssets = false; }).catch(() => {
+      spaceport.resetPad();
+      document.body.classList.remove("launching");
+      player.group.visible = true;
+      toast("Rymdens grafik kunde inte laddas. Uppskjutningen avbröts. Kontrollera anslutningen och försök igen.");
+    });
+  }
+
+  function beginSpace(): void {
+    if (!space) return;
+    spaceActive = true;
+    keys.clear();
+    document.body.classList.remove("launching");
+    document.body.classList.add("in-space");
+    space.begin(false);
+  }
+
+  function skipLaunch(): void {
+    if (!space) { toast("Rymdens grafik laddas fortfarande ..."); return; }
+    spaceport.finish();
+    beginSpace();
+  }
+
+  function returnFromSpace(reason: "reentry" | "crash"): void {
+    spaceActive = false;
+    document.body.classList.remove("in-space");
+    spaceport.resetPad();
+    const exit = new THREE.Vector3(PAD.x + 14, 0, PAD.z - 44);
+    player.group.position.copy(inCity ? worldToCity(exit) : exit);
+    updateRegion(exit.z >= FOREST_JOIN);
+    // Face the fresh rocket on the pad, with the camera behind the player.
+    const toPad = new THREE.Vector3(PAD.x - exit.x, 0, PAD.z - exit.z);
+    const local = inCity ? new THREE.Vector3(toPad.z, 0, -toPad.x) : toPad;
+    const heading = Math.atan2(local.x, local.z);
+    player.group.rotation.set(0, heading, 0);
+    yaw = heading + Math.PI;
+    pitch = 0.16;
+    distance = 9;
+    player.group.visible = true;
+    resetMovement();
+    locationId = "";
+    worldFade = 1;
+    worldFadeColor = reason === "crash" ? "#000000" : "#ffffff";
+    updateCamera(1);
+    toast(reason === "crash"
+      ? "Farkosten förstördes i en kollision. Du är tillbaka vid Grönved Rymdcenter, där en ny raket står redo på startplattan."
+      : "Kapseln landade mjukt under fallskärmarna. Välkommen hem till Grönved Rymdcenter! En ny raket står redo.");
+  }
+
+  let worldFade = 0;
+  let worldFadeColor = "#000000";
+  const setText = (id: string, text: string): void => {
+    const node = element(id);
+    if (node.textContent !== text) node.textContent = text;
+  };
+  const setHtml = (id: string, html: string): void => {
+    const node = element(id);
+    if (node.innerHTML !== html) node.innerHTML = html;
+  };
+
+  function updateLaunchHud(dt: number): void {
+    element("launch-hud").hidden = !launching();
+    element("space-hud").hidden = !spaceActive;
+    document.body.classList.toggle("hud-hidden", spaceActive && !!space?.hudHidden);
+    document.body.classList.toggle("in-cockpit", spaceActive && !!space?.cockpit);
+    const fade = element("fade");
+    if (spaceActive && space) {
+      const hud = space.hud;
+      setText("space-title", hud.title);
+      setText("space-detail", hud.detail);
+      setHtml("space-stats", hud.stats.map(([label, value]) => `<dt>${label}</dt><dd>${value}</dd>`).join(""));
+      setHtml("space-destinations", hud.destinations.map(d =>
+        `<li class="${d.active ? "active" : ""}${d.selected ? " selected" : ""}"><kbd>${d.key}</kbd><span>${d.name}</span><small>${d.active ? "här" : d.distance}</small></li>`).join(""));
+      const crosshair = element("space-crosshair");
+      crosshair.hidden = !hud.crosshair.visible;
+      crosshair.style.left = `${hud.crosshair.x * 100}%`;
+      crosshair.style.top = `${hud.crosshair.y * 100}%`;
+      element("space-gear").hidden = hud.mode !== "flight";
+      setHtml("space-gears", GEAR_LIST.map((_, i) => `<li class="${i <= hud.gear.index ? "on" : ""}${i === hud.gear.index ? " current" : ""}"></li>`).join(""));
+      setText("space-gear-name", `${hud.gear.index + 1} · ${hud.gear.name} · ${hud.gear.speed}${hud.gear.limited ? " · gravitationsbroms" : ""}`);
+      setText("space-score", hud.score);
+      const target = element("space-target");
+      target.hidden = !hud.target.visible;
+      if (hud.target.visible) {
+        target.style.left = `${hud.target.x * 100}%`;
+        target.style.top = `${hud.target.y * 100}%`;
+        target.classList.toggle("edge", hud.target.edge);
+        target.style.setProperty("--angle", `${hud.target.angle}rad`);
+        setText("space-target-label", hud.target.label);
+        setText("space-target-eta", hud.target.eta);
+      }
+      setText("space-caption", hud.caption);
+      element("space-warning").hidden = !hud.warning;
+      setText("space-warning", hud.warning);
+      const marker = element("space-marker");
+      marker.hidden = !hud.marker.visible;
+      if (hud.marker.visible) {
+        marker.style.left = `${hud.marker.x * 100}%`;
+        marker.style.top = `${hud.marker.y * 100}%`;
+        setText("space-marker-label", hud.marker.label);
+      }
+      fade.style.background = hud.fadeColor;
+      fade.style.opacity = String(hud.fade);
+      return;
+    }
+    if (launching()) {
+      setText("launch-timer", spaceport.timerText);
+      setText("launch-status", spaceport.status);
+      setText("launch-altitude", spaceport.phase === "ascent" ? `Höjd ${Math.round(spaceport.altitude).toLocaleString("sv-SE")} m` : "Bärraket Nordstjärnan · LC-1");
+      setText("launch-speed", spaceport.phase === "ascent" ? `Fart ${Math.round(spaceport.speed * 3.6).toLocaleString("sv-SE")} km/h` : "Väder: godkänt för start");
+      worldFadeColor = "#ffffff";
+      worldFade = spaceport.phase === "ascent" ? THREE.MathUtils.smoothstep(spaceport.time, ASCENT_SECONDS - 1.1, ASCENT_SECONDS) : 0;
+    } else {
+      worldFade = Math.max(0, worldFade - dt * 0.7);
+    }
+    fade.style.background = worldFadeColor;
+    fade.style.opacity = String(worldFade);
+  }
+
   function arrestPlayer(reason: string): void {
     if (city.activeVehicle) {
       city.activeVehicle.speed = 0;
@@ -634,28 +806,79 @@ async function init(): Promise<void> {
     toast(`Polisen fångade dig: ${reason}. Fängelse i ${JAIL_SECONDS} sekunder. Du behåller dina upptäckter och din utrustning.`);
   }
 
-  function releasePlayer(): void {
+  function freeSpotNearStation(): THREE.Vector3 | null {
     for (let radius = 0; radius <= 24; radius += 2) {
       const samples = radius === 0 ? 1 : 16;
       for (let i = 0; i < samples; i++) {
         const x = CITY_SPAWN.x + Math.cos(i / samples * Math.PI * 2) * radius;
         const z = CITY_SPAWN.z + Math.sin(i / samples * Math.PI * 2) * radius;
         if (city.blocked(x, z) || city.vehicleBlocked(x, z, PLAYER_RADIUS) || city.pedestrianBlocked(x, z, PLAYER_RADIUS)) continue;
-        jailed = false;
-        city.scene.add(player.group);
-        player.group.position.set(x, 0, z);
-        yaw = -Math.PI / 2;
-        resetMovement();
-        locationId = "";
-        updateCamera(1);
-        toast("Du är fri igen. Kör högst 70 km/h och stanna vid rött. Din bil står kvar där du blev stoppad.");
-        return;
+        return new THREE.Vector3(x, 0, z);
       }
+    }
+    return null;
+  }
+
+  function releasePlayer(): void {
+    const spot = freeSpotNearStation();
+    if (spot) {
+      jailed = false;
+      city.scene.add(player.group);
+      player.group.position.copy(spot);
+      yaw = -Math.PI / 2;
+      resetMovement();
+      locationId = "";
+      updateCamera(1);
+      toast("Du är fri igen. Kör högst 70 km/h och stanna vid rött. Din bil står kvar där du blev stoppad.");
+      return;
     }
     if (!releaseWaiting) {
       releaseWaiting = true;
       toast("Fängelsetiden är slut. Polisen väntar på en ledig, säker plats utanför stationen för att släppa ut dig.");
     }
+  }
+
+  function crashVehicle(vehicle: Vehicle, crash: VehicleCrash): void {
+    const wasWanted = police.wanted;
+    city.wreck(vehicle);
+    police.clear();
+    carCrash = { vehicle, remaining: CAR_CRASH_SECONDS, waiting: false };
+    player.group.position.set(crash.center.x, 0, crash.center.z);
+    player.group.visible = false;
+    resetMovement();
+    crashEffects.impact({
+      position: cityToWorld(crash.center),
+      contact: cityToWorld(crash.contact),
+      // Moving targets drive away, so they get a road scorch instead of a decal on their body.
+      ground: crash.obstacle !== "static",
+      scale: 0.75,
+    }, scene, [vehicle.group, player.group], globalHeight);
+    const reason = crash.obstacle === "static" ? "Du körde in i ett föremål"
+      : crash.obstacle === "moving" ? "Du krockade på gatan" : "Du körde av vägen vid stadsgränsen";
+    toast(`Krasch i ${Math.round(crash.speed * 3.6)} km/h! ${reason} och bilen exploderade. Ingen skadades.${wasWanted ? " Polisjakten avbryts." : ""} Du börjar om vid bussterminalen om fyra sekunder.`);
+  }
+
+  function updateCarCrash(dt: number): void {
+    if (!carCrash) return;
+    carCrash.remaining = Math.max(0, carCrash.remaining - dt);
+    if (carCrash.remaining > 0) return;
+    // The wreck reappears at its original parking spot as soon as that spot is clear.
+    if (!carCrash.waiting) city.repair(carCrash.vehicle);
+    const spot = freeSpotNearStation();
+    if (!spot) {
+      if (!carCrash.waiting) toast("Väntar på en ledig plats vid bussterminalen ...");
+      carCrash.waiting = true;
+      return;
+    }
+    carCrash = null;
+    player.group.position.copy(spot);
+    player.group.rotation.set(0, Math.PI / 2, 0);
+    player.group.visible = true;
+    yaw = -Math.PI / 2;
+    resetMovement();
+    locationId = "";
+    updateCamera(1);
+    toast("Du är tillbaka vid bussterminalen. Fordonet står på sin vanliga plats igen.");
   }
 
   function updatePolice(dt: number): void {
@@ -668,7 +891,7 @@ async function init(): Promise<void> {
     const event = police.update(dt, {
       position: worldToCity(globalPosition()),
       vehicle: city.activeVehicle,
-      available: !indoors() && !aviation.active,
+      available: !indoors() && !aviation.active && !carCrash && !launching() && !spaceActive,
     });
     if (event === "arrest") arrestPlayer(reason);
     else if (event === "escaped") toast("Du skakade av dig polisen. Efterlysningen är avskriven.");
@@ -676,11 +899,11 @@ async function init(): Promise<void> {
 
   function updateSurvival(dt: number): void {
     const wasNight = survival.night;
-    survival.update(dt, currentHouse !== null || inCity || aviation.active);
+    survival.update(dt, currentHouse !== null || inCity || aviation.active || launching() || spaceActive);
     if (survival.night !== wasNight) {
       toast(survival.night ? aviation.active ? "Nattflygning · Du är trygg ombord. Följ banljusen tillbaka till flygplatsen." : inCity ? "Natt över Norrhamn. Fönstren lyser och staden är trygg." : "Natten är här! Sök skydd i ett hus eller utrusta svärdet med 1." : "Solen går upp. Varulvarna drar sig tillbaka.");
     }
-    const hit = !inCity && !aviation.active && werewolves.update(dt, elapsed, mapPosition(), currentHouse !== null, survival);
+    const hit = !inCity && !aviation.active && !spaceActive && !launching() && werewolves.update(dt, elapsed, mapPosition(), currentHouse !== null, survival);
     if (hit) toast("En fiende träffade dig! Sök skydd eller försvara dig med F.");
     if (survival.health <= 0) {
       treehouse.level = "ground";
@@ -700,17 +923,24 @@ async function init(): Promise<void> {
     sky.material.uniforms.daylight.value = daylight;
     sky.material.uniforms.zenith.value.copy(nightSky).lerp(daySky, daylight);
     sky.material.uniforms.horizon.value.copy(nightHorizon).lerp(dayHorizon, daylight);
+    if (launching()) {
+      // The sky deepens to black as the rocket climbs out of the dense lower atmosphere.
+      const darkness = spaceport.skyDarkness;
+      sky.material.uniforms.zenith.value.lerp(spaceZenith, darkness);
+      sky.material.uniforms.horizon.value.lerp(spaceHorizon, darkness * 0.75);
+    }
     scene.fog!.color.copy(nightFog).lerp(dayFog, daylight);
     city.scene.fog!.color.copy(scene.fog!.color);
     outdoorFog.density = THREE.MathUtils.damp(outdoorFog.density,
-      aviation.active ? flightFogDensity(aviation.plane.position.y) : 0.0013, 2, dt);
+      aviation.active ? flightFogDensity(aviation.plane.position.y)
+        : launching() ? flightFogDensity(spaceport.altitude) * 0.8 : 0.0013, 2, dt);
     scene.environmentIntensity = THREE.MathUtils.lerp(0.12, 0.8, daylight);
     const minutes = Math.floor(survival.remaining / 60);
     const seconds = String(survival.remaining % 60).padStart(2, "0");
     element("day-status").textContent = `${survival.night ? "Natt" : "Dag"} · ${minutes}:${seconds} till ${survival.night ? "gryning" : "natt"}`;
     element<HTMLProgressElement>("health").value = survival.health;
     element("health-label").textContent = `Hälsa ${Math.ceil(survival.health)} / 100`;
-    element("safety-status").textContent = aviation.crashRemaining > 0 ? "Flygkrasch · Återvänder snart till flygplatsen" : aviation.active ? "Ombord · Trygg flygning" : indoors() ? "Inomhus · Hälsan återhämtas" : inCity ? "Trygg stad · Hälsan återhämtas" : treehouse.elevated ? "Högt i äppelträdet · Fienderna når inte hit" : werewolves.count ? `${werewolves.count} fiender i närheten` : survival.night ? "Natt · Se upp för varulvar" : "Dagsljus · Hälsan återhämtas";
+    element("safety-status").textContent = spaceActive ? "Rymdfärd · Livsuppehållet fungerar" : launching() ? "Uppskjutning · Fastspänd i kapseln" : aviation.crashRemaining > 0 ? "Flygkrasch · Återvänder snart till flygplatsen" : carCrash ? "Bilkrasch · Börjar om vid bussterminalen" : aviation.active ? "Ombord · Trygg flygning" : indoors() ? "Inomhus · Hälsan återhämtas" : inCity ? "Trygg stad · Hälsan återhämtas" : treehouse.elevated ? "Högt i äppelträdet · Fienderna når inte hit" : werewolves.count ? `${werewolves.count} fiender i närheten` : survival.night ? "Natt · Se upp för varulvar" : "Dagsljus · Hälsan återhämtas";
   }
 
   const mapBase = document.createElement("canvas");
@@ -788,6 +1018,7 @@ async function init(): Promise<void> {
       AIRPORT_BOUNDS.maxX - AIRPORT_BOUNDS.minX, AIRPORT_BOUNDS.maxZ - AIRPORT_BOUNDS.minZ);
     ctx.fillStyle = "#263641";
     ctx.fillRect(775, 605, 30, 310);
+    spaceport.drawMap(ctx, (x, z) => ({ x, y: z }), large, scale);
     ctx.strokeStyle = "#ffe2a6";
     ctx.lineWidth = 2 / scale;
     ctx.beginPath();
@@ -910,7 +1141,7 @@ async function init(): Promise<void> {
     if (!started) return;
     element("map-title").textContent = "Grönved · Norrhamn · Flygplatsen";
     element("large-map").setAttribute("aria-label", "Sammanhängande världskarta med skogens byar, staden, flygplatsen, planet och din position");
-    element("map-legend").innerHTML = "<span>Vit pil: du / lokalens dörr</span><span>Gul punkt: planet</span><span>Gult: café / fordon</span><span>Rosa: restaurang</span><span>Turkos: butik</span>";
+    element("map-legend").innerHTML = "<span>Vit pil: du / lokalens dörr</span><span>Gul punkt: planet</span><span>Vit punkt: raketen</span><span>Gult: café / fordon</span><span>Rosa: restaurang</span><span>Turkos: butik</span>";
     drawMap(largeContext!, true);
     showOverlay(overlay === "map" ? null : "map");
   }
@@ -935,6 +1166,8 @@ async function init(): Promise<void> {
     if (overlay === "dialogue") { showOverlay(null); return; }
     if (overlay || !started) return;
     if (sleep) return;
+    if (launching() || spaceActive) return;
+    if (carCrash) { toast("Bilen har exploderat. Du börjar snart om vid bussterminalen."); return; }
     if (!inCity && !indoors() && !aviation.active) {
       if (treehouse.climbing) return;
       const action = treehouse.interaction(player.group.position);
@@ -970,6 +1203,12 @@ async function init(): Promise<void> {
       resetMovement();
       updateCamera(1);
       toast("Planet är parkerat. Tryck E vid planet för att flyga igen.");
+      return;
+    }
+    if (!indoors() && !city.activeVehicle && !aviation.active && spaceport.nearElevator(globalPosition())) {
+      if (!grounded || jumpPreparation > 0) { toast("Landa innan du kliver in i hissen."); return; }
+      if (police.wanted) { toast("Polisen jagar dig. Kom undan innan du går ombord på raketen."); return; }
+      boardRocket();
       return;
     }
     if (!indoors() && !city.activeVehicle && aviation.nearPlane(globalPosition())) {
@@ -1034,7 +1273,7 @@ async function init(): Promise<void> {
       if (officer) {
         element("speaker").textContent = `Polis ${officer.name}`;
         element("speaker-role").textContent = "Norrhamns vänliga trafikpolis";
-        element("dialogue-text").textContent = "Välkommen! Du kan låna parkerade fordon, men inte polispatruller i tjänst. Kör högst 70 km/h och stanna vid rött. Bryter du mot reglerna jagar patrullerna dig; blir du fångad får du sitta en minut i häktet. Vid terminalen finns också en BMW Sport med 400 km/h i toppfart, så var försiktig med gasen. Följ stigen norrut tillbaka till skogen, eller besök flygplatsen öster om staden.";
+        element("dialogue-text").textContent = "Välkommen! Du kan låna parkerade fordon, men inte polispatruller i tjänst. Kör högst 70 km/h och stanna vid rött. Bryter du mot reglerna jagar patrullerna dig; blir du fångad får du sitta en minut i häktet. Vid terminalen finns också en BMW Sport med 400 km/h i toppfart, så var försiktig med gasen. Krockar du sprängs bilen och du får börja om här vid terminalen. Följ stigen norrut tillbaka till skogen, eller besök flygplatsen öster om staden.";
         showOverlay("dialogue");
       } else if (citizen) {
         element("speaker").textContent = citizen.name;
@@ -1076,6 +1315,14 @@ async function init(): Promise<void> {
     if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Space"].includes(event.code) && started && !overlay) event.preventDefault();
     if (event.repeat) return;
     if (event.code === "Escape") { showOverlay(overlay ? null : "help"); return; }
+    if (spaceActive || launching()) {
+      if (!started || overlay) return;
+      if (spaceActive && space?.keydown(event.code)) { event.preventDefault(); return; }
+      if (launching() && event.code === "Enter") { skipLaunch(); return; }
+      if (event.code === "KeyM") { toast("Kartan visar Grönved. I rymden använder du destinationspanelen till höger."); return; }
+      keys.add(event.code);
+      return;
+    }
     if (event.code === "KeyM" && started && overlay !== "dialogue") { openMap(); return; }
     if (event.code === "KeyE") { talk(); return; }
     if (event.code === "KeyC") { travel(); return; }
@@ -1084,7 +1331,7 @@ async function init(): Promise<void> {
     if (sleep) return;
     if (started && !overlay) {
       if (treehouse.climbing) return;
-      if (event.code === "Space" && !city.activeVehicle && !aviation.active && grounded && jumpPreparation === 0) {
+      if (event.code === "Space" && !city.activeVehicle && !carCrash && !aviation.active && grounded && jumpPreparation === 0) {
         jumpPreparation = 0.1;
         player.prepareJump();
         return;
@@ -1129,6 +1376,12 @@ async function init(): Promise<void> {
   });
   canvas.addEventListener("pointermove", (event) => {
     if (!dragging || overlay) return;
+    if (spaceActive && space) {
+      space.look(event.clientX - lastPointerX, event.clientY - lastPointerY);
+      lastPointerX = event.clientX;
+      lastPointerY = event.clientY;
+      return;
+    }
     const sensitivity = aiming ? aimZoom / 52 : 1;
     yaw -= (event.clientX - lastPointerX) * 0.005 * sensitivity;
     pitch = THREE.MathUtils.clamp(pitch + (event.clientY - lastPointerY) * 0.004 * sensitivity, aiming ? -1.35 : 0.13, aiming ? 1.45 : 0.95);
@@ -1141,7 +1394,8 @@ async function init(): Promise<void> {
   canvas.addEventListener("wheel", (event) => {
     event.preventDefault();
     if (started && !overlay) {
-      if (aiming) aimZoom = THREE.MathUtils.clamp(aimZoom + event.deltaY * 0.035, 18, 52);
+      if (spaceActive && space) space.zoomBy(event.deltaY);
+      else if (aiming) aimZoom = THREE.MathUtils.clamp(aimZoom + event.deltaY * 0.035, 18, 52);
       else distance = THREE.MathUtils.clamp(distance + event.deltaY * 0.01, 4, 18);
     }
   }, { passive: false });
@@ -1150,6 +1404,7 @@ async function init(): Promise<void> {
     camera.updateProjectionMatrix();
     renderer.setSize(innerWidth, innerHeight);
     renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    space?.resize(innerWidth, innerHeight, Math.min(devicePixelRatio, 2));
   });
   canvas.addEventListener("webglcontextlost", (event) => {
     event.preventDefault();
@@ -1183,6 +1438,12 @@ async function init(): Promise<void> {
   }
 
   function updatePlayer(dt: number): void {
+    if (spaceActive && space) {
+      const event = space.update(dt, keys);
+      if (event) returnFromSpace(event.reason);
+      return;
+    }
+    if (launching()) return;
     if (treehouse.climbing) {
       treehouse.update(dt, player.group.position);
       player.group.rotation.y = treehouse.climbHeading;
@@ -1205,18 +1466,24 @@ async function init(): Promise<void> {
       yaw = player.group.rotation.y + Math.PI;
       return;
     }
+    if (carCrash) {
+      updateCarCrash(dt);
+      return;
+    }
     if (inCity && city.activeVehicle) {
+      const vehicle = city.activeVehicle;
       const throttle = Number(keys.has("ArrowUp") || keys.has("KeyW")) - Number(keys.has("ArrowDown") || keys.has("KeyS"));
       const steering = Number(keys.has("ArrowRight") || keys.has("KeyD")) - Number(keys.has("ArrowLeft") || keys.has("KeyA"));
-      const previous = city.activeVehicle.group.position.clone();
-      city.drive(dt, throttle, steering, keys.has("Space"), shape => police.checkContact({
-        position: player.group.position, vehicle: city.activeVehicle, available: true,
+      const previous = vehicle.group.position.clone();
+      const crash = city.drive(dt, throttle, steering, keys.has("Space"), shape => police.checkContact({
+        position: player.group.position, vehicle, available: true,
       }, shape));
-      const offence = police.observeDriving(previous, city.activeVehicle, dt);
+      if (crash) { crashVehicle(vehicle, crash); return; }
+      const offence = police.observeDriving(previous, vehicle, dt);
       if (offence) toast(offence);
-      player.group.position.copy(city.activeVehicle.group.position);
-      player.group.rotation.y = city.activeVehicle.group.rotation.y;
-      if (!dragging && Math.abs(city.activeVehicle.speed) > 1) {
+      player.group.position.copy(vehicle.group.position);
+      player.group.rotation.y = vehicle.group.rotation.y;
+      if (!dragging && Math.abs(vehicle.speed) > 1) {
         const heading = player.group.rotation.y + Math.PI;
         yaw += Math.atan2(Math.sin(heading - yaw), Math.cos(heading - yaw)) * (1 - Math.exp(-dt * 3));
       }
@@ -1316,6 +1583,20 @@ async function init(): Promise<void> {
       return;
     }
     const position = globalPosition();
+    if (!spaceLoading && Math.hypot(position.x - spaceport.interactionPoint.x, position.z - spaceport.interactionPoint.z) < 260) {
+      // Fetch and compile the space scene in the background while the player walks up to the pad.
+      ensureSpace().catch(() => undefined);
+    }
+    if (!indoors() && !city.activeVehicle && spaceport.contains(position.x, position.z)) {
+      nearNpc = undefined;
+      nearHouse = undefined;
+      const near = spaceport.nearElevator(position);
+      element("location").textContent = "Grönved Rymdcenter";
+      element("location-detail").textContent = near ? "Hissen till besättningskapseln" : "Startplatta LC-1 · Bärraketen Nordstjärnan står redo";
+      element("interaction").hidden = overlay !== null || !near;
+      element("interaction-text").textContent = space ? "Ta hissen upp · Gå ombord på Nordstjärnan" : "Ta hissen upp · Gå ombord (rymden laddas ...)";
+      return;
+    }
     if (!indoors() && !city.activeVehicle && (inAirport(position.x, position.z) || aviation.nearPlane(position))) {
       nearNpc = undefined;
       nearHouse = undefined;
@@ -1346,7 +1627,7 @@ async function init(): Promise<void> {
       const venue = !city.activeVehicle ? city.nearVenue(player.group.position) : undefined;
       element("location").textContent = "Norrhamn City";
       element("location-detail").textContent = city.districtAt(player.group.position.x, player.group.position.z);
-      element("interaction").hidden = overlay !== null || (!venue && !vehicle && !officer && !citizen);
+      element("interaction").hidden = overlay !== null || carCrash !== null || (!venue && !vehicle && !officer && !citizen);
       element("interaction-text").textContent = city.activeVehicle ? "Stanna och kliv ur fordonet"
         : venue ? `Gå in i ${venue.name}` : vehicle ? `Kör ${city.vehicleName(vehicle).toLocaleLowerCase("sv")}`
         : officer ? `Prata med polis ${officer.name}` : citizen ? `Prata med ${citizen.name}` : "";
@@ -1410,12 +1691,17 @@ async function init(): Promise<void> {
   }
 
   function updateCamera(dt: number): void {
+    if (spaceActive) return;
+    if (spaceport.updateCamera(camera, dt, elapsed)) {
+      viewBow.visible = false;
+      return;
+    }
     const bowView = aiming && !inCity && !indoors() && !aviation.active && !treehouse.climbing;
     viewBow.visible = bowView && !overlay;
     if (!aviation.active) {
       const fov = bowView ? aimZoom : 52;
       if (camera.fov !== fov) { camera.fov = fov; camera.updateProjectionMatrix(); }
-      if (!city.activeVehicle) player.group.visible = !bowView;
+      if (!city.activeVehicle && !carCrash) player.group.visible = !bowView;
     }
     if (bowView) {
       camera.up.set(0, 1, 0);
@@ -1452,7 +1738,7 @@ async function init(): Promise<void> {
       return;
     }
     target.copy(player.group.position);
-    target.y += city.activeVehicle ? 2 : 1.4;
+    target.y += city.activeVehicle || carCrash ? 2 : 1.4;
     if (indoors()) {
       const roomPitch = Math.max(0.85, pitch);
       cameraOffset.set(Math.sin(yaw) * Math.cos(roomPitch), Math.sin(roomPitch), Math.cos(yaw) * Math.cos(roomPitch));
@@ -1462,7 +1748,7 @@ async function init(): Promise<void> {
       return;
     }
     cameraOffset.set(Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), Math.cos(yaw) * Math.cos(pitch));
-    const followDistance = city.activeVehicle ? Math.max(12, distance + 5) : distance;
+    const followDistance = city.activeVehicle || carCrash ? Math.max(12, distance + 5) : distance;
     let safeDistance = followDistance;
     for (let d = 1.5; d <= followDistance; d += 0.45) {
       desiredCamera.copy(target).addScaledVector(cameraOffset, d);
@@ -1472,6 +1758,7 @@ async function init(): Promise<void> {
       if (desiredCamera.y < ground + 0.6 || city.cameraBlocked(local.x, local.y, local.z)
         || treehouse.solidAt(p.x, p.y, p.z, 0.2)
         || aviation.flightBlocked(p.x, p.y, p.z, 0.2)
+        || spaceport.flightBlocked(p.x, p.y, p.z, 0.2)
         || (p.z < FOREST_JOIN && desiredCamera.y < ground + 5 && world.blocked(p.x, p.z, 0.15))) {
         safeDistance = Math.max(1.2, d - 0.5);
         break;
@@ -1501,6 +1788,7 @@ async function init(): Promise<void> {
           updateSurvival(0);
         } else {
           updatePlayer(dt);
+          if (spaceport.update(dt, survival.daylight)) beginSpace();
           if (!treehouse.climbing) treehouse.update(dt, player.group.position);
           updateSurvival(dt);
           const hits = archery.update(dt, () => werewolves.arrowTargets(), point => world.projectileBlocked(point));
@@ -1521,8 +1809,8 @@ async function init(): Promise<void> {
         if (!started) player.update(dt, 0, elapsed);
       }
       world.update(elapsed, dt);
-      audio.update(elapsed, survival.night, inCity, aviation.active ? aviation.speed : city.activeVehicle?.speed,
-        started && !overlay && !currentVenue && !jailed, aviation.active, police.wanted && !indoors());
+      audio.update(elapsed, survival.night, inCity, aviation.active ? aviation.speed : launching() ? 3 + spaceport.speed * 0.02 : spaceActive ? undefined : city.activeVehicle?.speed,
+        started && !overlay && !currentVenue && !jailed, aviation.active || launching() || spaceActive, police.wanted && !indoors());
       for (let i = 0; i < npcs.length; i++) {
         const npc = npcs[i];
         npc.character.update(dt, 0, elapsed + i * 3);
@@ -1540,6 +1828,7 @@ async function init(): Promise<void> {
       sky.position.copy(camera.position);
       if (started) {
         updateDiscovery();
+        updateLaunchHud(dt);
         if (elapsed - lastMapUpdate > 0.12) {
           lastMapUpdate = elapsed;
           drawMap(miniContext!, false);
@@ -1548,7 +1837,8 @@ async function init(): Promise<void> {
           element("compass-line").innerHTML = `<span>${directions[(index + 1) % 8]}</span><i></i><i></i><b>${directions[index]}</b><i></i><i></i><span>${directions[(index + 7) % 8]}</span>`;
         }
       }
-      renderer.render(jailed ? jail.scene : currentVenue ? venueInterior.scene : currentHouse ? interior.scene : outsideScene(), camera);
+      if (spaceActive && space) space.render();
+      else renderer.render(jailed ? jail.scene : currentVenue ? venueInterior.scene : currentHouse ? interior.scene : outsideScene(), camera);
     }
     requestAnimationFrame(frame);
   }
